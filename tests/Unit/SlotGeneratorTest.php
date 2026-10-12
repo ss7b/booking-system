@@ -41,4 +41,25 @@ class SlotGeneratorTest extends TestCase
 
         $this->assertSame(['09:30'], array_map(static fn (TimeRange $slot): string => $slot->start->format('H:i'), $slots));
     }
+
+    public function test_generates_available_and_unavailable_slot_options(): void
+    {
+        $options = (new SlotGenerator)->generateOptions(
+            [new TimeRange(new DateTimeImmutable('2026-10-05 09:00'), new DateTimeImmutable('2026-10-05 10:00'))],
+            [new TimeRange(new DateTimeImmutable('2026-10-05 09:30'), new DateTimeImmutable('2026-10-05 10:00'))],
+            durationMinutes: 30,
+            slotIntervalMinutes: 30,
+        );
+
+        $this->assertSame(
+            [
+                ['time' => '09:00', 'available' => true],
+                ['time' => '09:30', 'available' => false],
+            ],
+            array_map(static fn (array $option): array => [
+                'time' => $option['range']->start->format('H:i'),
+                'available' => $option['available'],
+            ], $options),
+        );
+    }
 }

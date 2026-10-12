@@ -57,6 +57,7 @@ final class AvailabilityService
 
         $location->loadMissing('calendar.rules', 'calendar.overrides');
         $slots = [];
+        $slotOptions = [];
 
         foreach ($staffMembers as $staff) {
             $calendar = $staff->calendar ?? $location->calendar;
@@ -111,7 +112,7 @@ final class AvailabilityService
                 ? null
                 : (new DateTimeImmutable('now', $zone))->modify('+'.$service->max_advance_days.' days');
 
-            foreach ($this->slotGenerator->generate(
+            foreach ($this->slotGenerator->generateOptions(
                 $windows,
                 $busy,
                 (int) $service->duration_minutes,
@@ -120,12 +121,18 @@ final class AvailabilityService
                 (int) $service->buffer_after_minutes,
                 $minimumStart,
                 $maximumStart,
-            ) as $slot) {
-                $slots[] = [
+            ) as $option) {
+                $slotData = [
                     'staff_id' => $staff->getKey(),
-                    'start' => $slot->start->format(DATE_ATOM),
-                    'end' => $slot->end->format(DATE_ATOM),
+                    'start' => $option['range']->start->format(DATE_ATOM),
+                    'end' => $option['range']->end->format(DATE_ATOM),
                 ];
+
+                $slotOptions[] = $slotData + ['available' => $option['available']];
+
+                if ($option['available']) {
+                    $slots[] = $slotData;
+                }
             }
         }
 
@@ -147,6 +154,13 @@ final class AvailabilityService
 
                 return $slot;
             }, $slots),
+            'slot_options' => array_map(static function (array $slot) use ($requestedStaff): array {
+                if ($requestedStaff) {
+                    unset($slot['staff_id']);
+                }
+
+                return $slot;
+            }, $slotOptions),
         ];
     }
 }

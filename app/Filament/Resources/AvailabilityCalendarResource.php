@@ -13,7 +13,7 @@ class AvailabilityCalendarResource extends TenantResource
 {
     protected static ?string $model = AvailabilityCalendar::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-calendar';
 
     public static function form(Form $form): Form
     {

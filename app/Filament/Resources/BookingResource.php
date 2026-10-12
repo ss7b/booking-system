@@ -55,7 +55,11 @@ class BookingResource extends Resource
                 TextColumn::make('service_name_snapshot')->label('Service')->searchable(),
                 TextColumn::make('staff.name')->label('Staff')->sortable(),
                 TextColumn::make('location.name')->label('Location'),
-                TextColumn::make('starts_at')->label('Starts')->dateTime()->sortable(),
+                TextColumn::make('starts_at')
+                    ->label('Starts')
+                    ->timezone(fn (Booking $record): string => $record->location?->timezone ?: (Filament::getTenant()?->timezone ?? config('app.timezone')))
+                    ->dateTime()
+                    ->sortable(),
                 TextColumn::make('status')
                     ->badge()
                     ->formatStateUsing(fn (BookingStatus $state): string => $state->value)
@@ -178,7 +182,7 @@ class BookingResource extends Resource
                     ->fillForm(fn (Booking $record): array => [
                         'location_id' => $record->location_id,
                         'staff_id' => $record->staff_id,
-                        'starts_at' => $record->starts_at->setTimezone(Filament::getTenant()?->timezone ?? config('app.timezone'))->format('Y-m-d H:i:s'),
+                        'starts_at' => $record->starts_at,
                     ])
                     ->form([
                         Select::make('location_id')

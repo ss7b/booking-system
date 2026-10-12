@@ -1,0 +1,264 @@
+/* ============================================
+   Clinix Medical Center — Design System
+   style.css: Variables, Reset, Typography, RTL
+   ============================================ */
+
+/* --- Custom Properties --- */
+:root {
+  /* Primary — Trust Blue */
+  --color-primary:        #1A5F8A;
+  --color-primary-light:  #2E86AB;
+  --color-primary-dark:   #0F3D5C;
+
+  /* Accent — Warm Gold */
+  --color-accent:         #D4A853;
+  --color-accent-hover:   #B8912F;
+  --color-accent-light:   #F5E6C4;
+
+  /* Backgrounds */
+  --color-bg:             #FFFFFF;
+  --color-bg-alt:         #F5F7FA;
+  --color-bg-dark:        #0A1628;
+
+  /* Text */
+  --color-text:           #1A1A1A;
+  --color-text-muted:     #4A4A4A;
+  --color-text-light:     #7A7A7A;
+  --color-text-inverse:   #FFFFFF;
+
+  /* Borders */
+  --color-border:         #E5E5E5;
+  --color-border-light:   #F0F0F0;
+
+  /* Status */
+  --color-success:        #2E7D5A;
+  --color-warning:        #C4903C;
+  --color-error:          #B83B3B;
+  --color-info:           #1A5F8A;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 4px rgba(0,0,0,0.05);
+  --shadow-md:  0 2px 12px rgba(0,0,0,0.08);
+  --shadow-lg:  0 4px 24px rgba(0,0,0,0.12);
+
+  /* Spacing */
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  16px;
+  --space-lg:  24px;
+  --space-xl:  32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+  --space-4xl: 96px;
+
+  /* Border Radius */
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  20px;
+  --radius-full: 50%;
+
+  /* Transitions */
+  --transition-fast:  0.2s ease;
+  --transition-normal: 0.3s ease;
+
+  /* Font Families */
+  --font-primary: 'IBM Plex Sans Arabic', sans-serif;
+}
+
+/* --- Google Font Fallback (local woff2 loaded below) --- */
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  src: url('../fonts/ibm-plex-sans-arabic-400-latin.woff2') format('woff2'),
+       url('../fonts/ibm-plex-sans-arabic-400-arabic.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  src: url('../fonts/ibm-plex-sans-arabic-500-latin.woff2') format('woff2'),
+       url('../fonts/ibm-plex-sans-arabic-500-arabic.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  src: url('../fonts/ibm-plex-sans-arabic-600-latin.woff2') format('woff2'),
+       url('../fonts/ibm-plex-sans-arabic-600-arabic.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Sans Arabic';
+  src: url('../fonts/ibm-plex-sans-arabic-700-latin.woff2') format('woff2'),
+       url('../fonts/ibm-plex-sans-arabic-700-arabic.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* --- Reset --- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-primary);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  direction: rtl;
+  text-align: right;
+  -webkit-font-smoothing: antialiased;
+}
+
+img, svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+ul, ol {
+  list-style: none;
+}
+
+/* --- Typography --- */
+h1, h2, h3, h4 {
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+h1 { font-size: 48px; font-weight: 700; }
+h2 { font-size: 36px; font-weight: 700; }
+h3 { font-size: 24px; font-weight: 600; }
+h4 { font-size: 20px; font-weight: 600; }
+
+p  { font-size: 16px; font-weight: 400; color: var(--color-text-muted); line-height: 1.6; }
+small { font-size: 14px; font-weight: 400; color: var(--color-text-light); }
+
+/* --- Skip Link --- */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  right: 0;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  padding: var(--space-sm) var(--space-md);
+  z-index: 10000;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* --- Focus Visible --- */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* --- Container --- */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-xl);
+}
+
+/* --- Section --- */
+.section {
+  padding: var(--space-4xl) 0;
+}
+
+.section--alt {
+  background-color: var(--color-bg-alt);
+}
+
+.section--dark {
+  background-color: var(--color-bg-dark);
+  color: var(--color-text-inverse);
+}
+
+.section--dark h1,
+.section--dark h2,
+.section--dark h3,
+.section--dark h4 {
+  color: var(--color-text-inverse);
+}
+
+.section--dark p {
+  color: rgba(255,255,255,0.75);
+}
+
+/* --- Section Title --- */
+.section-title {
+  margin-bottom: var(--space-2xl);
+}
+
+.section-title h2 {
+  margin-bottom: var(--space-sm);
+}
+
+.section-title p {
+  max-width: 600px;
+}
+
+.section-title--center {
+  text-align: center;
+}
+
+.section-title--center .section-title p {
+  margin: 0 auto;
+}
+
+.section-title__line {
+  display: block;
+  width: 60px;
+  height: 3px;
+  background: var(--color-accent);
+  border: none;
+  margin-top: var(--space-md);
+  border-radius: 2px;
+}
+
+.section-title--center .section-title__line {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* --- Reduced Motion --- */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

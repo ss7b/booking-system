@@ -26,7 +26,7 @@ class CalendarOverrideResource extends Resource
             ->where('business_id', Filament::getTenant()?->getKey()));
     }
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-calendar-date-range';
 
     public static function form(Form $form): Form
     {

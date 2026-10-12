@@ -24,6 +24,39 @@ final class SlotGenerator
         ?DateTimeImmutable $notBefore = null,
         ?DateTimeImmutable $notAfter = null,
     ): array {
+        return array_values(array_map(
+            static fn (array $option): TimeRange => $option['range'],
+            array_filter(
+                $this->generateOptions(
+                    $workingWindows,
+                    $busyIntervals,
+                    $durationMinutes,
+                    $slotIntervalMinutes,
+                    $bufferBeforeMinutes,
+                    $bufferAfterMinutes,
+                    $notBefore,
+                    $notAfter,
+                ),
+                static fn (array $option): bool => $option['available'],
+            ),
+        ));
+    }
+
+    /**
+     * @param list<TimeRange> $workingWindows
+     * @param list<TimeRange> $busyIntervals
+     * @return list<array{range:TimeRange,available:bool}>
+     */
+    public function generateOptions(
+        array $workingWindows,
+        array $busyIntervals,
+        int $durationMinutes,
+        int $slotIntervalMinutes,
+        int $bufferBeforeMinutes = 0,
+        int $bufferAfterMinutes = 0,
+        ?DateTimeImmutable $notBefore = null,
+        ?DateTimeImmutable $notAfter = null,
+    ): array {
         if ($durationMinutes <= 0 || $slotIntervalMinutes <= 0 || $bufferBeforeMinutes < 0 || $bufferAfterMinutes < 0) {
             throw new InvalidArgumentException('Duration and interval must be positive; buffers cannot be negative.');
         }
@@ -42,19 +75,24 @@ final class SlotGenerator
 
                 $end = $start->add($duration);
                 $occupied = new TimeRange($start->sub($beforeBuffer), $end->add($afterBuffer));
+                $available = true;
 
                 foreach ($busyIntervals as $busyInterval) {
                     if ($occupied->overlaps($busyInterval)) {
-                        continue 2;
+                        $available = false;
+                        break;
                     }
                 }
 
-                $slots[$start->format('U.u')] = new TimeRange($start, $end);
+                $slots[$start->format('U.u')] = [
+                    'range' => new TimeRange($start, $end),
+                    'available' => $available,
+                ];
             }
         }
 
         $slots = array_values($slots);
-        usort($slots, static fn (TimeRange $left, TimeRange $right): int => $left->start <=> $right->start);
+        usort($slots, static fn (array $left, array $right): int => $left['range']->start <=> $right['range']->start);
 
         return $slots;
     }

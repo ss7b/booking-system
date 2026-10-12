@@ -8,10 +8,12 @@ use App\Models\CalendarRule;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\Rules\Unique;
 
 class CalendarRuleResource extends Resource
 {
@@ -25,7 +27,7 @@ class CalendarRuleResource extends Resource
             ->where('business_id', Filament::getTenant()?->getKey()));
     }
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-clock';
 
     public static function form(Form $form): Form
     {
@@ -38,7 +40,17 @@ class CalendarRuleResource extends Resource
                     0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday',
                     4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday',
                 ])->required(),
-                Forms\Components\TimePicker::make('start_time')->seconds(false)->required(),
+                Forms\Components\TimePicker::make('start_time')
+                    ->seconds(false)
+                    ->required()
+                    ->unique(
+                        ignoreRecord: true,
+                        modifyRuleUsing: fn (Unique $rule, Get $get): Unique => $rule
+                            ->where('calendar_id', $get('calendar_id'))
+                            ->where('day_of_week', $get('day_of_week'))
+                            ->where('end_time', $get('end_time')),
+                    )
+                    ->validationMessages(['unique' => 'This exact calendar rule already exists.']),
                 Forms\Components\TimePicker::make('end_time')->seconds(false)->after('start_time')->required(),
             ]);
     }

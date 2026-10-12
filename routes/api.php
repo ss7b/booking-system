@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Public\AvailabilityController;
 use App\Http\Controllers\Api\V1\Public\BookingController;
+use App\Http\Controllers\Api\V1\Public\LocationController;
 use App\Http\Controllers\Api\V1\Public\ServiceController;
 use App\Http\Controllers\Api\V1\Public\StaffController;
 use App\Http\Middleware\ResolvePublicBusiness;
@@ -11,7 +12,9 @@ use App\Http\Middleware\EnsureBusinessMembership;
 
 Route::prefix('v1')->middleware(ResolvePublicBusiness::class)->group(function () {
     Route::get('/services', [ServiceController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/locations', [LocationController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/staff', [StaffController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/availability/calendar', [AvailabilityController::class, 'calendar'])->middleware('throttle:60,1');
     Route::get('/availability', AvailabilityController::class)->middleware('throttle:60,1');
     Route::post('/booking-holds', [BookingController::class, 'hold'])->middleware('throttle:10,1');
     Route::post('/bookings', [BookingController::class, 'storeDirect'])->middleware('throttle:10,1');

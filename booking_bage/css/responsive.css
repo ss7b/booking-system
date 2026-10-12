@@ -1,0 +1,456 @@
+/* ============================================
+   Clinix Medical Center — Responsive Styles
+   responsive.css
+   ============================================ */
+
+/* --- Mobile Bottom Bar --- */
+.mobile-bottom-bar {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-sm) var(--space-lg);
+  z-index: 900;
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+}
+
+/* --- Floating WhatsApp (mobile) --- */
+.floating-whatsapp {
+  display: none;
+  position: fixed;
+  bottom: 80px;
+  left: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  background: #25D366;
+  align-items: center;
+  justify-content: center;
+  z-index: 899;
+  box-shadow: var(--shadow-lg);
+}
+
+.floating-whatsapp svg {
+  width: 28px;
+  height: 28px;
+  fill: #fff;
+}
+
+/* --- Mobile Menu Overlay --- */
+.nav-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 998;
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+}
+
+.nav-overlay.is-visible {
+  display: block;
+  opacity: 1;
+}
+
+/* --- Mobile Nav Drawer --- */
+.nav-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 300px;
+  max-width: 85vw;
+  height: 100%;
+  background: var(--color-bg);
+  z-index: 999;
+  transform: translateX(100%);
+  transition: transform var(--transition-normal);
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.nav-drawer.is-open {
+  transform: translateX(0);
+}
+
+.nav-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-drawer__close {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-alt);
+  color: var(--color-text-muted);
+}
+
+.nav-drawer__close svg {
+  width: 20px;
+  height: 20px;
+}
+
+.nav-drawer__nav {
+  padding: var(--space-md);
+}
+
+.nav-drawer__link {
+  display: block;
+  padding: var(--space-md);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.nav-drawer__link:hover {
+  background: var(--color-bg-alt);
+  color: var(--color-primary);
+}
+
+.nav-drawer__submenu {
+  padding-right: var(--space-lg);
+  display: none;
+}
+
+.nav-drawer__submenu.is-open {
+  display: block;
+}
+
+.nav-drawer__submenu-link {
+  display: block;
+  padding: var(--space-sm) var(--space-md);
+  font-size: 14px;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+}
+
+.nav-drawer__submenu-link:hover {
+  background: var(--color-bg-alt);
+  color: var(--color-primary);
+}
+
+.nav-drawer__cta {
+  padding: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  margin-top: var(--space-md);
+}
+
+/* --- Hamburger Button --- */
+.hamburger {
+  display: none;
+  flex-direction: column;
+  gap: 5px;
+  width: 28px;
+  padding: 4px 0;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.hamburger span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--color-text);
+  border-radius: 2px;
+  transition: all var(--transition-fast);
+}
+
+.hamburger.is-active span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.hamburger.is-active span:nth-child(2) {
+  opacity: 0;
+}
+
+.hamburger.is-active span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
+/* --- Breakpoint: 1280px --- */
+@media (max-width: 1280px) {
+  .container {
+    padding: 0 var(--space-lg);
+  }
+}
+
+/* --- Breakpoint: 1024px --- */
+@media (max-width: 1024px) {
+  .nav-desktop {
+    display: none;
+  }
+
+  .hamburger {
+    display: flex;
+  }
+
+  .mobile-bottom-bar {
+    display: block;
+  }
+
+  .floating-whatsapp {
+    display: flex;
+  }
+
+  /* Body scroll lock when drawer open */
+  body.nav-open {
+    overflow: hidden;
+  }
+
+  h1 { font-size: 36px; }
+  h2 { font-size: 28px; }
+  h3 { font-size: 22px; }
+
+  .section {
+    padding: var(--space-3xl) 0;
+  }
+
+  .hero {
+    padding: var(--space-3xl) 0;
+  }
+
+  .hero__content {
+    max-width: 100%;
+  }
+
+  .stat-card__number {
+    font-size: 36px;
+  }
+}
+
+/* --- Breakpoint: 768px --- */
+@media (max-width: 768px) {
+  .container {
+    padding: 0 var(--space-md);
+  }
+
+  h1 { font-size: 32px; }
+  h2 { font-size: 26px; }
+  h3 { font-size: 20px; }
+
+  .section {
+    padding: var(--space-2xl) 0;
+  }
+
+  .section-title {
+    margin-bottom: var(--space-xl);
+  }
+
+  /* Hero */
+  .hero {
+    padding: var(--space-2xl) 0;
+  }
+
+  .hero__title {
+    font-size: 28px;
+  }
+
+  .hero__text {
+    font-size: 15px;
+  }
+
+  .hero__actions {
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .hero__actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero__img-wrap {
+    margin-top: var(--space-xl);
+  }
+
+  /* Services grid */
+  .services-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+
+  /* Doctors grid */
+  .doctors-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Testimonials */
+  .testimonials-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Why choose us */
+  .benefits-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
+  }
+
+  /* Stats */
+  .stats-row {
+    flex-wrap: wrap;
+    gap: var(--space-md);
+  }
+
+  .stat-card {
+    flex: 1 1 calc(50% - var(--space-md));
+    min-width: 140px;
+  }
+
+  /* Footer */
+  .footer__top {
+    flex-direction: column;
+    gap: var(--space-xl);
+    text-align: center;
+  }
+
+  .footer__links {
+    justify-content: center;
+  }
+
+  .footer__bottom {
+    text-align: center;
+  }
+
+  /* Booking step indicator — compact */
+  .step-indicator__label {
+    font-size: 11px;
+  }
+
+  .step-indicator__circle {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+
+  .step-indicator__connector {
+    top: 15px;
+    left: calc(-50% + 15px);
+    width: calc(100% - 30px);
+  }
+
+  /* Contact cards */
+  .contact-cards {
+    grid-template-columns: 1fr;
+  }
+
+  /* Form inputs full-width */
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .form-row .form-group {
+    margin-bottom: var(--space-lg);
+  }
+
+  /* Footer nav on mobile */
+  .footer__nav {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+/* --- Breakpoint: 480px --- */
+@media (max-width: 480px) {
+  .container {
+    padding: 0 var(--space-sm);
+  }
+
+  h1 { font-size: 26px; }
+  h2 { font-size: 22px; }
+  h3 { font-size: 18px; }
+
+  .section {
+    padding: var(--space-xl) 0;
+  }
+
+  .hero {
+    padding: var(--space-xl) 0;
+  }
+
+  .hero__title {
+    font-size: 24px;
+  }
+
+  .hero__subtitle {
+    font-size: 14px;
+  }
+
+  .btn {
+    padding: 12px 20px;
+    font-size: 13px;
+  }
+
+  .btn--lg {
+    padding: 14px 24px;
+    font-size: 14px;
+  }
+
+  /* Keep the calendar readable without horizontal scrolling. */
+  .cal-days-header,
+  .cal-grid {
+    gap: 4px;
+  }
+
+  .cal-day-name {
+    font-size: 11px;
+  }
+
+  .cal-day {
+    font-size: 13px;
+  }
+
+  /* Time slots: 2 columns */
+  .time-slots {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+
+  /* Service selection in booking */
+  .booking-service-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Doctor selection in booking */
+  .booking-doctor-list {
+    flex-direction: column;
+  }
+
+  .booking-doctor-list .doctor-card {
+    flex-direction: row;
+  }
+
+  .booking-doctor-list .doctor-card__img-wrap {
+    width: 100px;
+    aspect-ratio: 1;
+    flex-shrink: 0;
+  }
+
+  /* Footer */
+  .footer__brand {
+    text-align: center;
+  }
+
+  .footer__social {
+    justify-content: center;
+  }
+}
+
+/* --- Breakpoint: 1536px --- */
+@media (min-width: 1536px) {
+  .container {
+    max-width: 1400px;
+  }
+}

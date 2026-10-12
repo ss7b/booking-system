@@ -39,6 +39,7 @@ class ServiceController extends Controller
                 'name' => $service->name,
                 'slug' => $service->slug,
                 'duration_minutes' => $service->duration_minutes,
+                'max_advance_days' => $service->max_advance_days,
                 'price' => $service->price_minor === null ? null : [
                     'minor' => $service->price_minor,
                     'currency' => $service->currency ?? $business->default_currency,

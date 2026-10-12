@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Enums\BookingStatus;
+use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Booking\Services\IdempotentMutation;
 use App\Domain\Booking\Services\RescheduleBooking;
 use App\Domain\Booking\Services\TransitionBooking;
@@ -20,7 +21,7 @@ use Illuminate\Validation\Rule;
 
 class BookingController extends Controller
 {
-    public function reschedule(Request $request, string $booking, IdempotentMutation $idempotency, RescheduleBooking $reschedule): JsonResponse
+    public function reschedule(Request $request, string $booking, IdempotentMutation $idempotency, RescheduleBooking $reschedule, BusinessAccess $access): JsonResponse
     {
         $data = $request->validate([
             'staff_id' => ['required', 'ulid'],
@@ -30,10 +31,12 @@ class BookingController extends Controller
         ]);
         $business = $this->business($request);
         $record = Booking::query()->where('business_id', $business->getKey())->findOrFail($booking);
+        abort_unless($access->canManageBooking($request->user(), $record), 404);
         $location = Location::query()
             ->where('business_id', $business->getKey())
             ->where('is_active', true)
             ->findOrFail($data['location_id']);
+        abort_unless($access->canAccessLocation($request->user(), $business, $location), 404);
         $staff = Staff::query()
             ->where('business_id', $business->getKey())
             ->where('status', 'active')
@@ -82,7 +85,7 @@ class BookingController extends Controller
         }
     }
 
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, BusinessAccess $access): JsonResponse
     {
         $business = $this->business($request);
         $filters = $request->validate([
@@ -97,8 +100,11 @@ class BookingController extends Controller
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $bookings = Booking::query()
-            ->where('business_id', $business->getKey())
+        if (isset($filters['location_id'])) {
+            abort_unless($access->locations($request->user(), $business)->whereKey($filters['location_id'])->exists(), 404);
+        }
+
+        $bookings = $access->bookings($request->user(), $business)
             ->when(isset($filters['location_id']), fn ($query) => $query->where('location_id', $filters['location_id']))
             ->when(isset($filters['staff_id']), fn ($query) => $query->where('staff_id', $filters['staff_id']))
             ->when(isset($filters['service_id']), fn ($query) => $query->where('service_id', $filters['service_id']))
@@ -131,17 +137,18 @@ class BookingController extends Controller
         ]);
     }
 
-    public function show(Request $request, string $booking): JsonResponse
+    public function show(Request $request, string $booking, BusinessAccess $access): JsonResponse
     {
         $record = Booking::query()
             ->where('business_id', $this->business($request)->getKey())
             ->with(['service', 'staff', 'location', 'customer'])
             ->findOrFail($booking);
+        abort_unless($access->canViewBooking($request->user(), $record), 404);
 
         return response()->json(['data' => $this->bookingData($record)]);
     }
 
-    public function transition(Request $request, string $booking, string $action, IdempotentMutation $idempotency, TransitionBooking $transition): JsonResponse
+    public function transition(Request $request, string $booking, string $action, IdempotentMutation $idempotency, TransitionBooking $transition, BusinessAccess $access): JsonResponse
     {
         $targets = [
             'confirm' => BookingStatus::Confirmed,
@@ -157,6 +164,7 @@ class BookingController extends Controller
         $record = Booking::query()
             ->where('business_id', $business->getKey())
             ->findOrFail($booking);
+        abort_unless($access->canManageBooking($request->user(), $record), 404);
         $actorId = (string) $request->user()->getAuthIdentifier();
 
         $key = $request->header('Idempotency-Key');

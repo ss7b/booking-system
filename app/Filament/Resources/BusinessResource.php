@@ -54,8 +54,10 @@ class BusinessResource extends TenantResource
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()
-                    ->visible(fn (Business $record): bool => $record->getKey() !== Filament::getTenant()?->getKey() && self::hasNoTenantData($record))
+                    ->visible(fn (Business $record): bool => app(\App\Domain\Authorization\BusinessAccess::class)->canManageBusinessSettings(Filament::auth()->user(), $record)
+                        && $record->getKey() !== Filament::getTenant()?->getKey() && self::hasNoTenantData($record))
                     ->action(fn (Business $record) => DB::transaction(function () use ($record): void {
+                        abort_unless(app(\App\Domain\Authorization\BusinessAccess::class)->canManageBusinessSettings(Filament::auth()->user(), $record), 403);
                         $record->users()->detach();
                         $record->delete();
                     })),

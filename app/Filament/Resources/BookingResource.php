@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Domain\Booking\Services\CreateBooking;
 use App\Domain\Booking\Services\RescheduleBooking;
 use App\Domain\Booking\Services\TransitionBooking;
+use App\Domain\Authorization\BusinessAccess;
 use App\Enums\BookingStatus;
 use App\Filament\Resources\BookingResource\Pages\ListBookings;
 use App\Models\Booking;
@@ -42,8 +43,13 @@ class BookingResource extends Resource
     public static function getEloquentQuery(): Builder
     {
         $tenant = Filament::getTenant();
+        $user = Filament::auth()->user();
 
-        return parent::getEloquentQuery()->where('business_id', $tenant?->getKey());
+        if (! $tenant instanceof Business || ! $user) {
+            return parent::getEloquentQuery()->whereRaw('1 = 0');
+        }
+
+        return app(BusinessAccess::class)->bookings($user, $tenant);
     }
 
     public static function table(Table $table): Table
@@ -79,9 +85,10 @@ class BookingResource extends Resource
                 Action::make('create_booking')
                     ->label('New booking')
                     ->icon('heroicon-o-plus')
+                    ->visible(fn (): bool => self::canManageCurrentBookings())
                     ->form([
                         Select::make('location_id')
-                            ->options(fn () => Location::query()->where('business_id', Filament::getTenant()?->getKey())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
+                            ->options(fn () => app(BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
                             ->live()->required(),
                         Select::make('service_id')
                             ->options(fn (Get $get) => Service::query()
@@ -112,11 +119,13 @@ class BookingResource extends Resource
                     ->action(function (array $data): void {
                         $business = Filament::getTenant();
                         abort_unless($business instanceof Business, 500);
+                        abort_unless(self::canManageCurrentBookings(), 403);
 
                         $location = Location::query()
                             ->where('business_id', $business->getKey())
                             ->where('is_active', true)
                             ->findOrFail($data['location_id']);
+                        abort_unless(app(BusinessAccess::class)->canAccessLocation(Filament::auth()->user(), $business, $location), 404);
                         $service = Service::query()
                             ->where('business_id', $business->getKey())
                             ->where('is_active', true)
@@ -159,22 +168,37 @@ class BookingResource extends Resource
                     ->color('success')
                     ->requiresConfirmation()
                     ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Held)
-                    ->action(fn (Booking $record) => app(TransitionBooking::class)->execute($record, BookingStatus::Confirmed, null, 'user', (string) Filament::auth()->id())),
+                    ->action(function (Booking $record): void {
+                        self::authorizeBookingAction($record);
+                        app(TransitionBooking::class)->execute($record, BookingStatus::Confirmed, null, 'user', (string) Filament::auth()->id());
+                    }),
                 Action::make('cancel')
                     ->color('danger')
                     ->form([Textarea::make('reason')->maxLength(255)])
                     ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true))
-                    ->action(fn (Booking $record, array $data) => app(TransitionBooking::class)->execute($record, BookingStatus::Cancelled, $data['reason'] ?? null, 'user', (string) Filament::auth()->id())),
+                    ->action(function (Booking $record, array $data): void {
+                        self::authorizeBookingAction($record);
+                        app(TransitionBooking::class)->execute($record, BookingStatus::Cancelled, $data['reason'] ?? null, 'user', (string) Filament::auth()->id());
+                    }),
                 Action::make('check_in')
                     ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Confirmed)
-                    ->action(fn (Booking $record) => app(TransitionBooking::class)->execute($record, BookingStatus::CheckedIn, null, 'user', (string) Filament::auth()->id())),
+                    ->action(function (Booking $record): void {
+                        self::authorizeBookingAction($record);
+                        app(TransitionBooking::class)->execute($record, BookingStatus::CheckedIn, null, 'user', (string) Filament::auth()->id());
+                    }),
                 Action::make('complete')
                     ->visible(fn (Booking $record): bool => $record->status === BookingStatus::CheckedIn)
-                    ->action(fn (Booking $record) => app(TransitionBooking::class)->execute($record, BookingStatus::Completed, null, 'user', (string) Filament::auth()->id())),
+                    ->action(function (Booking $record): void {
+                        self::authorizeBookingAction($record);
+                        app(TransitionBooking::class)->execute($record, BookingStatus::Completed, null, 'user', (string) Filament::auth()->id());
+                    }),
                 Action::make('no_show')
                     ->color('warning')
                     ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Confirmed, BookingStatus::CheckedIn], true))
-                    ->action(fn (Booking $record) => app(TransitionBooking::class)->execute($record, BookingStatus::NoShow, null, 'user', (string) Filament::auth()->id())),
+                    ->action(function (Booking $record): void {
+                        self::authorizeBookingAction($record);
+                        app(TransitionBooking::class)->execute($record, BookingStatus::NoShow, null, 'user', (string) Filament::auth()->id());
+                    }),
                 Action::make('reschedule')
                     ->label('Reschedule')
                     ->icon('heroicon-o-calendar')
@@ -207,7 +231,9 @@ class BookingResource extends Resource
                     ->action(function (Booking $record, array $data): void {
                         $business = Filament::getTenant();
                         abort_unless($business instanceof Business, 500);
+                        self::authorizeBookingAction($record);
                         $location = Location::query()->where('business_id', $business->getKey())->where('is_active', true)->findOrFail($data['location_id']);
+                        abort_unless(app(BusinessAccess::class)->canAccessLocation(Filament::auth()->user(), $business, $location), 404);
                         $staff = Staff::query()->where('business_id', $business->getKey())->where('status', 'active')->findOrFail($data['staff_id']);
 
                         try {
@@ -249,5 +275,18 @@ class BookingResource extends Resource
     public static function canDelete($record): bool
     {
         return false;
+    }
+
+    private static function canManageCurrentBookings(): bool
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        return $business instanceof Business && $user && app(BusinessAccess::class)->canManageBookings($user, $business);
+    }
+
+    private static function authorizeBookingAction(Booking $record): void
+    {
+        abort_unless(app(BusinessAccess::class)->canManageBooking(Filament::auth()->user(), $record), 403);
     }
 }

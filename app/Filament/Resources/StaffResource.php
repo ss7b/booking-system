@@ -4,7 +4,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\StaffResource\Pages\ManageStaff;
 use App\Models\AvailabilityCalendar;
+use App\Models\Business;
 use App\Models\Staff;
+use App\Models\User;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -25,16 +27,26 @@ class StaffResource extends TenantResource
                 Forms\Components\TextInput::make('slug')->alphaDash()->maxLength(200)->nullable(),
                 Forms\Components\TextInput::make('email')->email()->maxLength(255)->nullable(),
                 Forms\Components\TextInput::make('phone')->tel()->maxLength(50)->nullable(),
+                Forms\Components\Select::make('user_id')
+                    ->label('Optional login account')
+                    ->options(function (): array {
+                        $business = Filament::getTenant();
+
+                        return $business instanceof Business
+                            ? $business->users()->where('users.is_active', true)->orderBy('name')->get()->mapWithKeys(fn (User $user): array => [$user->getKey() => $user->name.' ('.$user->email.')'])->all()
+                            : [];
+                    })
+                    ->searchable()->preload()->nullable(),
                 Forms\Components\Select::make('status')->options(['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'])->required()->default('active'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => AvailabilityCalendar::query()->where('business_id', Filament::getTenant()?->getKey())->orderBy('name')->pluck('name', 'id'))
+                    ->options(fn () => app(\App\Domain\Authorization\BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
                     ->searchable()->nullable(),
                 Forms\Components\Select::make('services')
-                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->where('business_id', Filament::getTenant()?->getKey()))
+                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(\App\Domain\Authorization\BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
                 Forms\Components\Select::make('locations')
-                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->where('business_id', Filament::getTenant()?->getKey()))
+                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
             ]);
     }

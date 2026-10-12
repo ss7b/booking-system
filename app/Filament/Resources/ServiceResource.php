@@ -24,7 +24,7 @@ class ServiceResource extends TenantResource
                 Forms\Components\TextInput::make('slug')->required()->alphaDash()->maxLength(200),
                 Forms\Components\Textarea::make('description')->columnSpanFull(),
                 Forms\Components\Select::make('locations')
-                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->where('business_id', Filament::getTenant()?->getKey()))
+                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
                 Forms\Components\TextInput::make('duration_minutes')->numeric()->integer()->minValue(1)->required(),
                 Forms\Components\TextInput::make('slot_interval_minutes')->numeric()->integer()->minValue(1)->required(),

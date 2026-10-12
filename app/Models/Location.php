@@ -18,6 +18,12 @@ class Location extends BookingModel
         return $this->belongsTo(Business::class);
     }
 
+    public function assignedUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'business_user_locations')
+            ->withPivot('business_id', 'created_at');
+    }
+
     public function calendar(): BelongsTo
     {
         return $this->belongsTo(AvailabilityCalendar::class, 'calendar_id');
@@ -25,12 +31,12 @@ class Location extends BookingModel
 
     public function staff(): BelongsToMany
     {
-        return $this->belongsToMany(Staff::class, 'staff_locations')->withPivot('is_active');
+        return $this->belongsToMany(Staff::class, 'staff_locations')->using(StaffLocation::class)->withPivot('is_active');
     }
 
     public function services(): BelongsToMany
     {
-        return $this->belongsToMany(Service::class, 'service_locations');
+        return $this->belongsToMany(Service::class, 'service_locations')->using(ServiceLocation::class);
     }
 
     public function bookings(): HasMany

@@ -16,6 +16,7 @@ class EnsureBusinessMembership
         abort_unless(
             $business instanceof Business
                 && $request->user()
+                && $request->user()->is_active
                 && $business->users()->whereKey($request->user()->getKey())->exists(),
             403,
             'You are not a member of this business.',

@@ -33,11 +33,15 @@ while (! is_file($payload['barrier'])) {
 file_put_contents($payload['started'], 'started');
 
 try {
+    $business = Business::query()->findOrFail($payload['business_id']);
+    $location = Location::query()->findOrFail($payload['location_id']);
+    $service = Service::query()->findOrFail($payload['service_id']);
+    $staff = Staff::query()->findOrFail($payload['staff_id']);
     $result = app(CreateBooking::class)->execute(
-        Business::query()->findOrFail($payload['business_id']),
-        Location::query()->findOrFail($payload['location_id']),
-        Service::query()->findOrFail($payload['service_id']),
-        Staff::query()->findOrFail($payload['staff_id']),
+        $business,
+        $location,
+        $service,
+        $staff,
         new DateTimeImmutable($payload['start']),
         ['name' => 'Concurrency Test Customer', 'phone' => $payload['phone']],
         null,

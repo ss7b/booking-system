@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\CalendarOverrideResource\Pages\ManageCalendarOverrides;
 use App\Models\AvailabilityCalendar;
 use App\Models\CalendarOverride;
+use App\Domain\Authorization\BusinessAccess;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -22,8 +23,12 @@ class CalendarOverrideResource extends Resource
 
     public static function getEloquentQuery(): Builder
     {
-        return CalendarOverride::query()->whereHas('calendar', fn (Builder $query) => $query
-            ->where('business_id', Filament::getTenant()?->getKey()));
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        if (! $business || ! $user) return CalendarOverride::query()->whereRaw('1 = 0');
+
+        return CalendarOverride::query()->whereIn('calendar_id', app(BusinessAccess::class)->calendars($user, $business)->select('id'));
     }
 
     protected static ?string $navigationIcon = 'heroicon-o-calendar-date-range';
@@ -33,7 +38,7 @@ class CalendarOverrideResource extends Resource
         return $form
             ->schema([
                 Forms\Components\Select::make('calendar_id')
-                    ->options(fn () => AvailabilityCalendar::query()->where('business_id', Filament::getTenant()?->getKey())->orderBy('name')->pluck('name', 'id'))
+                    ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
                     ->searchable()->required(),
                 Forms\Components\DatePicker::make('date')->required(),
                 Forms\Components\Select::make('mode')->options(['open' => 'Open', 'closed' => 'Closed'])->live()->required(),

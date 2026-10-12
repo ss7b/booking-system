@@ -3,6 +3,8 @@
 namespace Database\Seeders;
 
 use App\Enums\BookingStatus;
+use App\Enums\BranchAccessScope;
+use App\Enums\BusinessRole;
 use App\Models\AvailabilityCalendar;
 use App\Models\Booking;
 use App\Models\BookingStatusHistory;
@@ -40,7 +42,7 @@ class DemoBookingSeeder extends Seeder
                 ['email' => 'admin@example.test'],
                 ['name' => 'Demo Admin', 'password' => 'password', 'email_verified_at' => now()],
             );
-            $business->users()->syncWithoutDetaching([$user->getKey() => ['role' => 'owner']]);
+            $business->users()->syncWithoutDetaching([$user->getKey() => ['role' => BusinessRole::Owner->value, 'access_scope' => BranchAccessScope::All->value]]);
 
             $calendar = AvailabilityCalendar::query()->firstOrCreate(
                 ['business_id' => $business->getKey(), 'name' => 'Main Calendar'],

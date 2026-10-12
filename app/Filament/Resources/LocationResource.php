@@ -26,13 +26,13 @@ class LocationResource extends TenantResource
                 Forms\Components\TextInput::make('timezone')->maxLength(64)->placeholder('Asia/Riyadh'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => AvailabilityCalendar::query()
-                        ->where('business_id', Filament::getTenant()?->getKey())
+                    ->options(fn () => app(\App\Domain\Authorization\BusinessAccess::class)
+                        ->calendars(Filament::auth()->user(), Filament::getTenant())
                         ->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->nullable(),
                 Forms\Components\Select::make('services')
-                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->where('business_id', Filament::getTenant()?->getKey()))
+                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(\App\Domain\Authorization\BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
                 Forms\Components\Textarea::make('address')->columnSpanFull(),
                 Forms\Components\TextInput::make('phone')->tel()->maxLength(50),

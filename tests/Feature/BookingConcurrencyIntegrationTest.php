@@ -30,7 +30,8 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $this->markTestSkippedIfNotMysql();
 
         $business = $this->makeBusiness();
-        $fixture = $this->makeBookingFixture($business, '2026-10-05');
+        $date = $this->futureDate();
+        $fixture = $this->makeBookingFixture($business, $date);
 
         $customer = Customer::query()->create([
             'business_id' => $business->getKey(),
@@ -48,10 +49,10 @@ class BookingConcurrencyIntegrationTest extends TestCase
             'reference' => 'BK-HELD-EXPIRED',
             'status' => BookingStatus::Held,
             'source' => 'public',
-            'starts_at' => new DateTimeImmutable('2026-10-05T09:00:00+03:00'),
-            'ends_at' => new DateTimeImmutable('2026-10-05T09:30:00+03:00'),
-            'occupied_starts_at' => new DateTimeImmutable('2026-10-05T08:45:00+03:00'),
-            'occupied_ends_at' => new DateTimeImmutable('2026-10-05T09:35:00+03:00'),
+            'starts_at' => new DateTimeImmutable($date.'T09:00:00+03:00'),
+            'ends_at' => new DateTimeImmutable($date.'T09:30:00+03:00'),
+            'occupied_starts_at' => new DateTimeImmutable($date.'T08:45:00+03:00'),
+            'occupied_ends_at' => new DateTimeImmutable($date.'T09:35:00+03:00'),
             'hold_expires_at' => now()->subMinute(),
             'service_name_snapshot' => $fixture['service']->name,
             'duration_snapshot' => $fixture['service']->duration_minutes,
@@ -66,7 +67,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
             $fixture['location'],
             $fixture['service'],
             $fixture['staff'],
-            new DateTimeImmutable('2026-10-05T09:00:00+03:00'),
+            new DateTimeImmutable($date.'T09:00:00+03:00'),
             ['name' => 'Fresh Customer', 'phone' => '+966500000112'],
             'Replacement after hold expiry',
             false,
@@ -85,7 +86,8 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $this->markTestSkippedIfNotMysql();
 
         $business = $this->makeBusiness();
-        $fixture = $this->makeBookingFixture($business, '2026-10-05');
+        $date = $this->futureDate();
+        $fixture = $this->makeBookingFixture($business, $date);
 
         $customer = Customer::query()->create([
             'business_id' => $business->getKey(),
@@ -103,10 +105,10 @@ class BookingConcurrencyIntegrationTest extends TestCase
             'reference' => 'BK-RESCHEDULE-001',
             'status' => BookingStatus::Confirmed,
             'source' => 'public',
-            'starts_at' => new DateTimeImmutable('2026-10-05T09:00:00+03:00'),
-            'ends_at' => new DateTimeImmutable('2026-10-05T09:30:00+03:00'),
-            'occupied_starts_at' => new DateTimeImmutable('2026-10-05T08:45:00+03:00'),
-            'occupied_ends_at' => new DateTimeImmutable('2026-10-05T09:35:00+03:00'),
+            'starts_at' => new DateTimeImmutable($date.'T09:00:00+03:00'),
+            'ends_at' => new DateTimeImmutable($date.'T09:30:00+03:00'),
+            'occupied_starts_at' => new DateTimeImmutable($date.'T08:45:00+03:00'),
+            'occupied_ends_at' => new DateTimeImmutable($date.'T09:35:00+03:00'),
             'service_name_snapshot' => $fixture['service']->name,
             'duration_snapshot' => $fixture['service']->duration_minutes,
             'price_minor_snapshot' => $fixture['service']->price_minor,
@@ -120,15 +122,16 @@ class BookingConcurrencyIntegrationTest extends TestCase
             $booking,
             $fixture['location'],
             $fixture['staff'],
-            new DateTimeImmutable('2026-10-05T10:00:00+03:00'),
+            new DateTimeImmutable($date.'T10:00:00+03:00'),
             'admin',
             'admin-1',
             'Customer requested a later slot.',
         );
 
         $this->assertSame(BookingStatus::Confirmed, $updated->status);
-        $this->assertSame('2026-10-05T07:00:00+00:00', $updated->starts_at->format(DATE_ATOM));
-        $this->assertSame('2026-10-05T07:30:00+00:00', $updated->ends_at->format(DATE_ATOM));
+        $expectedStart = (new DateTimeImmutable($date.'T10:00:00+03:00'))->setTimezone(new DateTimeZone('UTC'));
+        $this->assertSame($expectedStart->format(DATE_ATOM), $updated->starts_at->format(DATE_ATOM));
+        $this->assertSame($expectedStart->modify('+30 minutes')->format(DATE_ATOM), $updated->ends_at->format(DATE_ATOM));
         $this->assertNotNull($updated->histories()->latest('created_at')->first());
     }
 
@@ -137,14 +140,15 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $this->markTestSkippedIfNotMysql();
 
         $business = $this->makeBusiness();
-        $fixture = $this->makeBookingFixture($business, '2026-10-05');
+        $date = $this->futureDate();
+        $fixture = $this->makeBookingFixture($business, $date);
 
-        DB::transaction(function () use ($business, $fixture): void {
+        DB::transaction(function () use ($business, $fixture, $date): void {
             app(BookingLockManager::class)->lockForStaffRange(
                 $business,
                 $fixture['staff'],
-                CarbonImmutable::parse('2026-10-05 08:45:00', 'Asia/Riyadh'),
-                CarbonImmutable::parse('2026-10-05 09:35:00', 'Asia/Riyadh'),
+                CarbonImmutable::parse($date.' 08:45:00', 'Asia/Riyadh'),
+                CarbonImmutable::parse($date.' 09:35:00', 'Asia/Riyadh'),
                 'Asia/Riyadh',
             );
         });
@@ -152,7 +156,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $count = DB::table('booking_day_locks')
             ->where('business_id', $business->getKey())
             ->where('staff_id', $fixture['staff']->getKey())
-            ->where('booking_date', '2026-10-05')
+            ->where('booking_date', $date)
             ->count();
 
         $this->assertSame(1, $count);
@@ -167,6 +171,11 @@ class BookingConcurrencyIntegrationTest extends TestCase
             'default_currency' => 'SAR',
             'is_active' => true,
         ]);
+    }
+
+    private function futureDate(): string
+    {
+        return CarbonImmutable::now('Asia/Riyadh')->addDays(7)->toDateString();
     }
 
     private function makeBookingFixture(Business $business, string $forDate): array

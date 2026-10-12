@@ -21,7 +21,7 @@ class StaffBlockResource extends TenantResource
         return $form
             ->schema([
                 Forms\Components\Select::make('staff_id')
-                    ->relationship('staff', 'name', modifyQueryUsing: fn ($query) => $query->where('business_id', Filament::getTenant()?->getKey()))
+                    ->relationship('staff', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('staff.id', app(\App\Domain\Authorization\BusinessAccess::class)->staff(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->searchable()->preload()->required(),
                 Forms\Components\DateTimePicker::make('starts_at')->required(),
                 Forms\Components\DateTimePicker::make('ends_at')->after('starts_at')->required(),

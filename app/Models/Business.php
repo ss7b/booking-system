@@ -19,7 +19,16 @@ class Business extends BookingModel
 
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(User::class)->withPivot('role')->withTimestamps();
+        return $this->belongsToMany(User::class)
+            ->using(BusinessMembership::class)
+            ->withPivot('role', 'access_scope')
+            ->withTimestamps();
+    }
+
+    public function membersWithLocationAccess(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'business_user_locations', 'business_id', 'user_id')
+            ->withPivot('location_id', 'created_at');
     }
 
     public function locations(): HasMany

@@ -3,6 +3,8 @@
 namespace App\Filament\Resources\BusinessResource\Pages;
 
 use App\Filament\Resources\BusinessResource;
+use App\Enums\BranchAccessScope;
+use App\Enums\BusinessRole;
 use App\Models\Business;
 use Filament\Actions;
 use Filament\Facades\Filament;
@@ -17,7 +19,7 @@ class ManageBusinesses extends ManageRecords
         return [
             Actions\CreateAction::make()->after(function (Business $record): void {
                 $record->users()->syncWithoutDetaching([
-                    Filament::auth()->id() => ['role' => 'owner'],
+                    Filament::auth()->id() => ['role' => BusinessRole::Owner->value, 'access_scope' => BranchAccessScope::All->value],
                 ]);
             }),
         ];

@@ -26,6 +26,7 @@ final class CreateBooking
 {
     public function __construct(
         private readonly BookingLockManager $lockManager,
+        private readonly BookingConflictChecker $conflicts,
         private readonly BookingReferenceGenerator $referenceGenerator,
         private readonly AvailabilityService $availability,
     ) {}
@@ -44,6 +45,20 @@ final class CreateBooking
         ?string $actorId = null,
     ): BookingCreationResult {
         return DB::transaction(function () use ($business, $location, $service, $staff, $start, $customerData, $notes, $hold, $source, $actorType, $actorId): BookingCreationResult {
+            if (
+                (string) $location->business_id !== (string) $business->getKey()
+                || (string) $service->business_id !== (string) $business->getKey()
+                || (string) $staff->business_id !== (string) $business->getKey()
+                || ! $location->is_active
+                || ! $service->is_active
+                || $staff->status !== 'active'
+                || ! $location->services()->whereKey($service->getKey())->exists()
+                || ! $staff->services()->whereKey($service->getKey())->exists()
+                || ! $staff->locations()->whereKey($location->getKey())->wherePivot('is_active', true)->exists()
+            ) {
+                throw new DomainException('BOOKING_RELATIONSHIP_INVALID');
+            }
+
             $timezone = $location->timezone ?: $business->timezone;
             $localStart = $start->setTimezone(new DateTimeZone($timezone));
             $end = $start->add(new DateInterval('PT'.(int) $service->duration_minutes.'M'));
@@ -58,6 +73,10 @@ final class CreateBooking
                 $timezone,
             );
             $this->expireStaleHolds($business, $staff, $localStart->format('Y-m-d'), $timezone);
+
+            if ($this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd)) {
+                throw new DomainException('SLOT_UNAVAILABLE');
+            }
 
             $availability = $this->availability->forDate($business, $location, $service, $localStart->format('Y-m-d'), $staff);
             $requestedTimestamp = $start->format('U.u');

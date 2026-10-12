@@ -20,12 +20,12 @@ class Service extends BookingModel
 
     public function staff(): BelongsToMany
     {
-        return $this->belongsToMany(Staff::class, 'staff_services');
+        return $this->belongsToMany(Staff::class, 'staff_services')->using(StaffService::class);
     }
 
     public function locations(): BelongsToMany
     {
-        return $this->belongsToMany(Location::class, 'service_locations');
+        return $this->belongsToMany(Location::class, 'service_locations')->using(ServiceLocation::class);
     }
 
     public function bookings(): HasMany

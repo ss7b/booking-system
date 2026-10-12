@@ -147,9 +147,10 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
             }
 
             $results = array_map(static fn (Process $worker): array => json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR), $workers);
-            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'created')));
-            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'slot_unavailable')));
-            $this->assertSame(1, DB::table('bookings')->where('business_id', $businessId)->where('staff_id', $staffId)->count());
+            $statuses = array_column($results, 'status');
+            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'created')), json_encode($statuses));
+            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'slot_unavailable')), json_encode($statuses));
+            $this->assertSame(1, DB::table('bookings')->where('business_id', $businessId)->where('staff_id', $staffId)->count(), json_encode($statuses));
         } finally {
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();

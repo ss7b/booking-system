@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Models\Business;
 use App\Models\User;
+use App\Enums\BranchAccessScope;
+use App\Enums\BusinessRole;
 use DateTimeZone;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -66,7 +68,7 @@ class SetupBookingAdmin extends Command
                 'email_verified_at' => now(),
             ]);
 
-            $business->users()->attach($user, ['role' => 'owner']);
+            $business->users()->attach($user, ['role' => BusinessRole::Owner->value, 'access_scope' => BranchAccessScope::All->value]);
         });
 
         $this->components->info('Administrator and business created. Open /admin and sign in with the email you entered.');

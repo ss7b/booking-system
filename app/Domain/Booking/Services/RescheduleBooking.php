@@ -22,6 +22,7 @@ final class RescheduleBooking
 {
     public function __construct(
         private readonly BookingLockManager $lockManager,
+        private readonly BookingConflictChecker $conflicts,
         private readonly AvailabilityService $availability,
     ) {}
 
@@ -92,6 +93,10 @@ final class RescheduleBooking
                     'timezone' => $timezone,
                 ],
             ]);
+
+            if ($this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd, (string) $booking->getKey())) {
+                throw new DomainException('SLOT_UNAVAILABLE');
+            }
 
             $availability = $this->availability->forDate(
                 $business,

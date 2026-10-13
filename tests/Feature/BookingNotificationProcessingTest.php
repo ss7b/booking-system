@@ -2,15 +2,21 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Notifications\CustomerNotificationDelivery;
+use App\Domain\Notifications\CustomerNotificationService;
 use App\Domain\Notifications\NotificationCenter;
 use App\Domain\Notifications\ProcessBookingNotification;
 use App\Enums\BookingStatus;
+use App\Filament\Pages\CustomerNotificationSettings as CustomerNotificationSettingsPage;
 use App\Filament\Pages\NotificationCenter as NotificationCenterPage;
 use App\Livewire\Filament\NotificationIndicator;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\CustomerNotification;
+use App\Models\CustomerNotificationAttempt;
 use App\Models\Location;
+use App\Models\OutboxEvent;
 use App\Models\Service;
 use App\Models\Staff;
 use App\Models\User;
@@ -18,7 +24,10 @@ use Carbon\CarbonInterface;
 use Filament\Facades\Filament;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -204,6 +213,484 @@ class BookingNotificationProcessingTest extends TestCase
             ->assertSee('wire:poll.5s.visible="poll"', false)
             ->assertDontSee('Notifications, 1 unread', false)
             ->assertDontSee($booking->reference);
+    }
+
+    public function test_customer_event_delivery_is_opt_in_idempotent_and_stays_outside_booking_processing(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $notifications = app(CustomerNotificationService::class);
+        $settings = $notifications->settings($business);
+        $settingsData = $settings->settings;
+        $settingsData['channels']['email']['enabled'] = true;
+        $settingsData['channels']['email']['credentials'] = [
+            'host' => 'smtp.example.test',
+            'port' => 587,
+            'from_address' => 'bookings@example.test',
+        ];
+        $settingsData['rules']['booking.created'] = ['enabled' => true, 'channels' => ['email']];
+        $settings->settings = $settingsData;
+        $settings->save();
+
+        $event = OutboxEvent::withoutEvents(fn () => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+
+        $first = $notifications->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $event->getKey(),
+        ]);
+        $second = $notifications->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $event->getKey(),
+        ]);
+
+        $this->assertNotNull($first);
+        $this->assertSame($first->getKey(), $second?->getKey());
+        $this->assertDatabaseCount('customer_notifications', 1);
+        $this->assertSame(['email'], $first->channels);
+        $this->assertSame('queued', $first->status);
+
+        $settingsData['rules']['booking.rescheduled'] = ['enabled' => true, 'channels' => ['email']];
+        $settingsData['rules']['booking.cancelled'] = ['enabled' => true, 'channels' => ['email']];
+        $settings->settings = $settingsData;
+        $settings->save();
+
+        $booking->starts_at = $booking->starts_at->addHour();
+        $booking->save();
+        $rescheduledEvent = OutboxEvent::withoutEvents(fn () => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingRescheduled',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now()->addSecond(),
+        ]));
+        $rescheduled = $notifications->processOutboxEvent('BookingRescheduled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $rescheduledEvent->getKey(),
+        ]);
+        $this->assertSame('booking.rescheduled', $rescheduled?->event_type);
+
+        $booking->status = BookingStatus::Cancelled;
+        $booking->save();
+        $cancelledEvent = OutboxEvent::withoutEvents(fn () => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingCancelled',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now()->addSeconds(2),
+        ]));
+        $cancelled = $notifications->processOutboxEvent('BookingCancelled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $cancelledEvent->getKey(),
+        ]);
+        $this->assertSame('booking.cancelled', $cancelled?->event_type);
+        $this->assertNull($notifications->processOutboxEvent('BookingRescheduled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $rescheduledEvent->getKey(),
+        ]));
+        $this->assertDatabaseCount('customer_notifications', 3);
+    }
+
+    public function test_customer_notification_falls_back_after_provider_rejection_and_tracks_delivery_states(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $booking->customer->update(['phone' => '+15551234567']);
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        foreach (['sms', 'whatsapp'] as $channel) {
+            $config['channels'][$channel] = [
+                'enabled' => true,
+                'credentials' => [
+                    'account_sid' => 'AC'.str_repeat('a', 32),
+                    'auth_token' => 'test-token',
+                    'from' => '+15557654321',
+                ],
+            ];
+            $config['templates']['booking.reminder'][$channel]['enabled'] = true;
+        }
+        $config['templates']['booking.reminder']['whatsapp']['content_sid'] = 'HX'.str_repeat('b', 32);
+        $settings->settings = $config;
+        $settings->save();
+
+        $notification = CustomerNotification::query()->create([
+            'business_id' => $business->getKey(),
+            'booking_id' => $booking->getKey(),
+            'customer_id' => $booking->customer_id,
+            'event_type' => 'booking.reminder',
+            'idempotency_key' => hash('sha256', 'delivery-fallback-test'),
+            'channels' => ['sms', 'whatsapp'],
+            'appointment_starts_at' => $booking->starts_at,
+            'appointment_fingerprint' => app(CustomerNotificationService::class)->appointmentFingerprint($booking),
+            'status' => 'queued',
+        ]);
+
+        Http::fakeSequence()
+            ->push(['code' => 21211], 400)
+            ->push(['sid' => 'SM'.str_repeat('c', 32)], 201);
+
+        $delivery = app(CustomerNotificationDelivery::class);
+        $delivery->deliver((string) $notification->getKey());
+        $this->assertSame('queued', $notification->fresh()->status);
+        $this->assertSame(1, $notification->fresh()->channel_index);
+
+        $delivery->deliver((string) $notification->getKey());
+        $this->assertSame('accepted', $notification->fresh()->status);
+        $this->assertDatabaseCount('customer_notification_attempts', 2);
+        $this->assertDatabaseHas('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'channel' => 'sms',
+            'status' => 'permanent',
+        ]);
+        $this->assertDatabaseHas('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'channel' => 'whatsapp',
+            'status' => 'accepted',
+            'provider_message_id' => 'SM'.str_repeat('c', 32),
+        ]);
+        Http::assertSentCount(2);
+    }
+
+    public function test_customer_provider_circuit_opens_and_allows_one_recovery_attempt_after_cooldown(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $booking->customer->update(['phone' => '+15551234567']);
+        $owner = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        $settings->settings = $config;
+        $settings->save();
+
+        $key = 'customer-notifications:provider:'.$business->getKey().':sms';
+        Cache::forget($key.':failures');
+        Cache::forget($key.':open-until');
+        Cache::forget($key.':recovery');
+        Http::fake(['api.twilio.com/*' => Http::response(['code' => 30001], 503)]);
+
+        $delivery = app(CustomerNotificationDelivery::class);
+        $createNotification = function (string $keySuffix) use ($business, $booking): CustomerNotification {
+            return CustomerNotification::query()->create([
+                'business_id' => $business->getKey(),
+                'booking_id' => $booking->getKey(),
+                'customer_id' => $booking->customer_id,
+                'event_type' => 'booking.reminder',
+                'idempotency_key' => hash('sha256', 'circuit-test:'.$keySuffix),
+                'channels' => ['sms'],
+                'appointment_starts_at' => $booking->starts_at,
+                'appointment_fingerprint' => app(CustomerNotificationService::class)->appointmentFingerprint($booking),
+                'status' => 'queued',
+            ]);
+        };
+
+        foreach (range(1, 5) as $attempt) {
+            $notification = $createNotification((string) $attempt);
+            $delivery->deliver((string) $notification->getKey());
+        }
+
+        $cooldownUntil = Cache::get($key.':open-until');
+        $this->assertIsInt($cooldownUntil);
+        $this->assertGreaterThan(now()->timestamp, $cooldownUntil);
+        Http::assertSentCount(5);
+
+        $this->travel(6)->minutes();
+        $recovery = $createNotification('recovery');
+        $delivery->deliver((string) $recovery->getKey());
+        $this->assertSame('failed', $recovery->fresh()->status);
+        $reopenedUntil = Cache::get($key.':open-until');
+        $this->assertGreaterThan(now()->timestamp, $reopenedUntil);
+        $this->assertGreaterThan($cooldownUntil, $reopenedUntil);
+
+        $blocked = $createNotification('blocked-during-cooldown');
+        $delivery->deliver((string) $blocked->getKey());
+        Http::assertSentCount(6);
+        $this->assertSame('failed', $blocked->fresh()->status);
+
+        Cache::forget($key.':failures');
+        Cache::forget($key.':open-until');
+        Cache::forget($key.':recovery');
+    }
+
+    public function test_customer_notification_settings_are_owner_only_and_render_without_exposing_credentials(): void
+    {
+        [$business] = $this->makeBookingFixture();
+        $owner = User::factory()->create();
+        $manager = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        $business->users()->attach($manager, ['role' => 'manager', 'access_scope' => 'all']);
+
+        $this->actingAs($owner, 'web')
+            ->get('/admin/'.$business->slug.'/customer-notifications')
+            ->assertOk()
+            ->assertSee('Provider connections')
+            ->assertSee('Email via SMTP')
+            ->assertSee('SMS via Twilio')
+            ->assertSee('WhatsApp via Twilio')
+            ->assertSee('Fallback channel 1')
+            ->assertSee('Booking confirmation')
+            ->assertSee('Recent customer notifications');
+
+        $this->actingAs($manager, 'web')
+            ->get('/admin/'.$business->slug.'/customer-notifications')
+            ->assertForbidden();
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms']['credentials']['auth_token'] = 'never-return-this-token';
+        $settings->settings = $config;
+        $settings->save();
+
+        $this->assertStringNotContainsString('never-return-this-token', (string) DB::table('business_customer_notification_settings')->where('business_id', $business->getKey())->value('settings'));
+        $this->assertSame('never-return-this-token', $settings->fresh()->settings['channels']['sms']['credentials']['auth_token']);
+    }
+
+    public function test_customer_notification_settings_save_ordered_channels_and_retain_disabled_template_content(): void
+    {
+        Queue::fake();
+        Http::fake();
+        [$business] = $this->makeBookingFixture();
+        $owner = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+
+        Livewire::actingAs($owner, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Filament::setTenant($business);
+
+        $component = Livewire::test(CustomerNotificationSettingsPage::class)
+            ->set('rules.booking_created.enabled', true)
+            ->set('rules.booking_created.channels', ['sms', 'email', ''])
+            ->set('templates.booking_created.email.enabled', false)
+            ->set('templates.booking_created.email.subject', 'Saved for later')
+            ->set('templates.booking_created.email.body', 'Retained content')
+            ->call('save')
+            ->assertHasNoErrors();
+
+        $stored = app(CustomerNotificationService::class)->settings($business)->settings;
+        $this->assertTrue($stored['rules']['booking.created']['enabled']);
+        $this->assertSame(['sms', 'email'], $stored['rules']['booking.created']['channels']);
+        $this->assertFalse($stored['templates']['booking.created']['email']['enabled']);
+        $this->assertSame('Saved for later', $stored['templates']['booking.created']['email']['subject']);
+        $this->assertSame('Retained content', $stored['templates']['booking.created']['email']['body']);
+        $this->assertStringNotContainsString('rules.booking.created', $component->html());
+
+        $component->set('templates.booking_created.email.body', 'Invalid {customer_secret}')
+            ->call('save')
+            ->assertHasErrors('templates.booking_created.email.body');
+
+        $component->set('rules.booking_created.channels', ['sms', 'sms', ''])
+            ->call('save')
+            ->assertHasErrors('rules.booking_created.channels');
+        Http::assertNothingSent();
+    }
+
+    public function test_customer_notification_history_filters_by_status_and_event(): void
+    {
+        [$business, , $booking] = $this->makeBookingFixture();
+        $owner = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+
+        foreach ([['booking.created', 'failed'], ['booking.rescheduled', 'delivered']] as [$event, $status]) {
+            CustomerNotification::query()->create([
+                'business_id' => $business->getKey(),
+                'booking_id' => $booking->getKey(),
+                'customer_id' => $booking->customer_id,
+                'event_type' => $event,
+                'idempotency_key' => hash('sha256', 'history-filter:'.$event),
+                'channels' => ['email'],
+                'status' => $status,
+            ]);
+        }
+
+        Livewire::actingAs($owner, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Filament::setTenant($business);
+
+        $component = Livewire::test(CustomerNotificationSettingsPage::class)
+            ->assertSee('Booking confirmation')
+            ->assertSee('Booking rescheduled');
+
+        $component->set('historyStatus', 'failed');
+        $this->assertSame(1, substr_count($component->html(), '<tr class="align-top">'));
+
+        $component->set('historyStatus', '')->set('historyEvent', 'booking.rescheduled');
+        $this->assertSame(1, substr_count($component->html(), '<tr class="align-top">'));
+    }
+
+    public function test_owner_can_resend_only_a_failed_notification_in_the_current_business(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $owner = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        $notification = CustomerNotification::query()->create([
+            'business_id' => $business->getKey(),
+            'booking_id' => $booking->getKey(),
+            'customer_id' => $booking->customer_id,
+            'event_type' => 'booking.created',
+            'idempotency_key' => hash('sha256', 'owner-resend-test'),
+            'channels' => ['email'],
+            'status' => 'failed',
+            'failed_at' => now(),
+            'error_code' => 'channels_exhausted',
+        ]);
+
+        Livewire::actingAs($owner, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Filament::setTenant($business);
+        Livewire::test(CustomerNotificationSettingsPage::class)
+            ->call('resend', (string) $notification->getKey());
+
+        $this->assertSame('queued', $notification->fresh()->status);
+        $this->assertSame($owner->getKey(), $notification->fresh()->resent_by);
+        $this->assertNotNull($notification->fresh()->resent_at);
+    }
+
+    public function test_signed_twilio_callback_updates_delivery_state_and_rejects_bad_signatures(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms']['credentials'] = ['auth_token' => 'callback-secret'];
+        $settings->settings = $config;
+        $settings->save();
+        $notification = CustomerNotification::query()->create([
+            'business_id' => $business->getKey(),
+            'booking_id' => $booking->getKey(),
+            'customer_id' => $booking->customer_id,
+            'event_type' => 'booking.created',
+            'idempotency_key' => hash('sha256', 'twilio-callback-test'),
+            'channels' => ['sms'],
+            'status' => 'accepted',
+            'accepted_at' => now(),
+        ]);
+        $attempt = CustomerNotificationAttempt::query()->create([
+            'customer_notification_id' => $notification->getKey(),
+            'channel' => 'sms',
+            'attempt_number' => 1,
+            'status' => 'accepted',
+            'provider_message_id' => 'SM'.str_repeat('d', 32),
+            'created_at' => now(),
+        ]);
+
+        $path = '/api/v1/customer-notification-attempts/'.$attempt->getKey().'/twilio-status';
+        $payload = ['MessageSid' => 'SM'.str_repeat('d', 32), 'MessageStatus' => 'delivered'];
+        ksort($payload);
+        $signatureInput = rtrim((string) config('app.url'), '/').$path;
+        foreach ($payload as $key => $value) {
+            $signatureInput .= $key.$value;
+        }
+        $signature = base64_encode(hash_hmac('sha1', $signatureInput, 'callback-secret', true));
+
+        $this->post($path, $payload, ['X-Twilio-Signature' => $signature])->assertNoContent();
+        $this->assertSame('delivered', $notification->fresh()->status);
+        $this->assertSame('delivered', $attempt->fresh()->status);
+
+        $this->post($path, $payload, ['X-Twilio-Signature' => 'invalid'])->assertForbidden();
+
+        $pending = CustomerNotification::query()->create([
+            'business_id' => $business->getKey(),
+            'booking_id' => $booking->getKey(),
+            'customer_id' => $booking->customer_id,
+            'event_type' => 'booking.created',
+            'idempotency_key' => hash('sha256', 'twilio-undelivered-callback-test'),
+            'channels' => ['sms', 'whatsapp'],
+            'status' => 'accepted',
+            'accepted_at' => now(),
+        ]);
+        $pendingAttempt = CustomerNotificationAttempt::query()->create([
+            'customer_notification_id' => $pending->getKey(),
+            'channel' => 'sms',
+            'attempt_number' => 1,
+            'status' => 'accepted',
+            'provider_message_id' => 'SM'.str_repeat('e', 32),
+            'created_at' => now(),
+        ]);
+        $pendingPath = '/api/v1/customer-notification-attempts/'.$pendingAttempt->getKey().'/twilio-status';
+        $failedPayload = ['MessageSid' => 'SM'.str_repeat('e', 32), 'MessageStatus' => 'undelivered', 'ErrorCode' => '30003'];
+        ksort($failedPayload);
+        $signatureInput = rtrim((string) config('app.url'), '/').$pendingPath;
+        foreach ($failedPayload as $key => $value) {
+            $signatureInput .= $key.$value;
+        }
+        $failedSignature = base64_encode(hash_hmac('sha1', $signatureInput, 'callback-secret', true));
+
+        $this->post($pendingPath, $failedPayload, ['X-Twilio-Signature' => $failedSignature])->assertNoContent();
+        $this->assertSame('queued', $pending->fresh()->status);
+        $this->assertSame(1, $pending->fresh()->channel_index);
+    }
+
+    public function test_customer_reminders_are_idempotent_and_old_or_missed_appointment_times_are_suppressed(): void
+    {
+        Queue::fake();
+        $now = now()->startOfSecond();
+        $this->travelTo($now);
+        [$business, , $booking] = $this->makeBookingFixture($now->copy()->addMinutes(60));
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['email']['enabled'] = true;
+        $config['channels']['email']['credentials'] = [
+            'host' => 'smtp.example.test',
+            'port' => 587,
+            'from_address' => 'bookings@example.test',
+        ];
+        $config['rules']['booking.reminder'] = ['enabled' => true, 'channels' => ['email'], 'lead_minutes' => 60];
+        $settings->settings = $config;
+        $settings->save();
+
+        $notifications = app(CustomerNotificationService::class);
+        $this->assertSame(1, $notifications->dispatchDueReminders());
+        $this->assertSame(1, $notifications->dispatchDueReminders());
+        $this->assertDatabaseCount('customer_notifications', 1);
+
+        $originalFingerprint = $notifications->appointmentFingerprint($booking);
+        $replacementStaff = Staff::query()->create([
+            'business_id' => $business->getKey(),
+            'name' => 'Replacement Staff',
+            'status' => 'active',
+        ]);
+        $booking->staff_id = $replacementStaff->getKey();
+        $booking->save();
+        $this->assertSame(1, $notifications->dispatchDueReminders());
+        $this->assertDatabaseCount('customer_notifications', 2);
+
+        $reminder = CustomerNotification::query()->where('appointment_fingerprint', $originalFingerprint)->firstOrFail();
+        $booking->starts_at = $now->copy()->addMinutes(90);
+        $booking->save();
+        app(CustomerNotificationDelivery::class)->deliver((string) $reminder->getKey());
+        $this->assertSame('superseded', $reminder->fresh()->status);
+
+        $missedBooking = $booking->replicate();
+        $missedBooking->reference = 'BK-MISSED-'.fake()->unique()->numerify('#####');
+        $missedBooking->starts_at = $now->copy()->addMinutes(30);
+        $missedBooking->ends_at = $missedBooking->starts_at->copy()->addMinutes(30);
+        $missedBooking->occupied_starts_at = $missedBooking->starts_at;
+        $missedBooking->occupied_ends_at = $missedBooking->ends_at;
+        $missedBooking->save();
+
+        $notifications->dispatchDueReminders();
+        $this->assertDatabaseHas('customer_notifications', [
+            'booking_id' => $missedBooking->getKey(),
+            'status' => 'skipped',
+            'error_code' => 'reminder_time_passed',
+        ]);
     }
 
     public function test_notification_api_rechecks_branch_access_and_marks_only_owned_notifications_read(): void

@@ -21,7 +21,9 @@
                         <article class="flex flex-wrap items-center justify-between gap-4 py-4 {{ $notification->read_at ? 'opacity-70' : '' }}">
                             <div class="min-w-0">
                                 <p class="font-medium">{{ str($notification->notification_type)->after('booking.')->replace('_', ' ')->headline() }}</p>
-                                @if ($notification->booking)
+                                @if (data_get($notification->data, 'message'))
+                                    <p class="text-sm text-gray-500">{{ data_get($notification->data, 'message') }}</p>
+                                @elseif ($notification->booking)
                                     <p class="text-sm text-gray-500">
                                         {{ $notification->booking->reference }}
                                         <span aria-hidden="true">·</span>

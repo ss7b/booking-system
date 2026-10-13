@@ -7,11 +7,15 @@ use App\Http\Controllers\Api\V1\Public\BookingController;
 use App\Http\Controllers\Api\V1\Public\LocationController;
 use App\Http\Controllers\Api\V1\Public\ServiceController;
 use App\Http\Controllers\Api\V1\Public\StaffController;
+use App\Http\Controllers\Webhooks\TwilioCustomerNotificationStatusController;
 use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\EnsureBusinessMembership;
 use App\Http\Middleware\ResolvePublicBusiness;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+
+Route::post('/v1/customer-notification-attempts/{attempt}/twilio-status', TwilioCustomerNotificationStatusController::class)
+    ->name('customer-notifications.twilio-status');
 
 Route::prefix('v1')->middleware(ResolvePublicBusiness::class)->group(function () {
     Route::get('/services', [ServiceController::class, 'index'])->middleware('throttle:60,1');

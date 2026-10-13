@@ -11,8 +11,10 @@ use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Location;
+use App\Models\OutboxEvent;
 use App\Models\Service;
 use App\Models\Staff;
+use App\Models\User;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -88,6 +90,21 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $business = $this->makeBusiness();
         $date = $this->futureDate();
         $fixture = $this->makeBookingFixture($business, $date);
+        $oldStaffUser = User::factory()->create();
+        $newStaffUser = User::factory()->create();
+        $business->users()->attach($oldStaffUser, ['role' => 'staff', 'access_scope' => 'all']);
+        $business->users()->attach($newStaffUser, ['role' => 'staff', 'access_scope' => 'all']);
+        $fixture['staff']->user_id = $oldStaffUser->getKey();
+        $fixture['staff']->save();
+        $newStaff = Staff::query()->create([
+            'business_id' => $business->getKey(),
+            'calendar_id' => $fixture['calendar']->getKey(),
+            'name' => 'New Assigned Staff',
+            'status' => 'active',
+            'user_id' => $newStaffUser->getKey(),
+        ]);
+        $newStaff->services()->sync([$fixture['service']->getKey()]);
+        $newStaff->locations()->sync([$fixture['location']->getKey() => ['is_active' => true]]);
 
         $customer = Customer::query()->create([
             'business_id' => $business->getKey(),
@@ -121,7 +138,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
             $business,
             $booking,
             $fixture['location'],
-            $fixture['staff'],
+            $newStaff,
             new DateTimeImmutable($date.'T10:00:00+03:00'),
             'admin',
             'admin-1',
@@ -133,6 +150,15 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $this->assertSame($expectedStart->format(DATE_ATOM), $updated->starts_at->format(DATE_ATOM));
         $this->assertSame($expectedStart->modify('+30 minutes')->format(DATE_ATOM), $updated->ends_at->format(DATE_ATOM));
         $this->assertNotNull($updated->histories()->latest('created_at')->first());
+
+        $event = OutboxEvent::query()
+            ->where('event_type', 'BookingRescheduled')
+            ->where('aggregate_id', $booking->getKey())
+            ->latest('created_at')
+            ->firstOrFail();
+
+        $this->assertSame($oldStaffUser->getKey(), $event->payload['old_staff_user_id']);
+        $this->assertSame($newStaffUser->getKey(), $event->payload['new_staff_user_id']);
     }
 
     public function test_it_serializes_duplicate_day_locks_for_the_same_staff_slot(): void
@@ -166,7 +192,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
     {
         return Business::query()->create([
             'name' => 'Concurrency Test Business',
-            'slug' => 'concurrency-' . Str::random(6),
+            'slug' => 'concurrency-'.Str::random(6),
             'timezone' => 'Asia/Riyadh',
             'default_currency' => 'SAR',
             'is_active' => true,
@@ -196,7 +222,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
             'business_id' => $business->getKey(),
             'calendar_id' => $calendar->getKey(),
             'name' => 'Main Location',
-            'slug' => 'main-' . Str::random(6),
+            'slug' => 'main-'.Str::random(6),
             'timezone' => 'Asia/Riyadh',
             'is_active' => true,
         ]);
@@ -204,7 +230,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
         $service = Service::query()->create([
             'business_id' => $business->getKey(),
             'name' => 'General Consultation',
-            'slug' => 'general-' . Str::random(6),
+            'slug' => 'general-'.Str::random(6),
             'duration_minutes' => 30,
             'buffer_before_minutes' => 15,
             'buffer_after_minutes' => 15,
@@ -220,7 +246,7 @@ class BookingConcurrencyIntegrationTest extends TestCase
             'business_id' => $business->getKey(),
             'calendar_id' => $calendar->getKey(),
             'name' => 'Sara Demo',
-            'slug' => 'sara-' . Str::random(6),
+            'slug' => 'sara-'.Str::random(6),
             'status' => 'active',
         ]);
 

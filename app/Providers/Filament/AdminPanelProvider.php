@@ -2,14 +2,19 @@
 
 namespace App\Providers\Filament;
 
+use App\Models\Business;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Notifications\Livewire\Notifications as FilamentNotifications;
 use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\Support\Enums\Alignment;
+use Filament\Support\Enums\VerticalAlignment;
+use Filament\View\PanelsRenderHook;
 use Filament\Widgets;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -22,12 +27,15 @@ class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
     {
+        FilamentNotifications::alignment(Alignment::Center);
+        FilamentNotifications::verticalAlignment(VerticalAlignment::Start);
+
         return $panel
             ->default()
             ->id('admin')
             ->path('admin')
             ->login()
-            ->tenant(\App\Models\Business::class, ownershipRelationship: 'users')
+            ->tenant(Business::class, ownershipRelationship: 'users')
             ->colors([
                 'primary' => Color::Amber,
             ])
@@ -41,6 +49,10 @@ class AdminPanelProvider extends PanelProvider
                 Widgets\AccountWidget::class,
                 Widgets\FilamentInfoWidget::class,
             ])
+            ->renderHook(
+                PanelsRenderHook::GLOBAL_SEARCH_AFTER,
+                fn () => view('filament.components.notification-indicator-hook'),
+            )
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,

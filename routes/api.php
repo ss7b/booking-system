@@ -1,15 +1,17 @@
 <?php
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\BusinessMembershipController;
+use App\Http\Controllers\Api\V1\Admin\NotificationController;
 use App\Http\Controllers\Api\V1\Public\AvailabilityController;
 use App\Http\Controllers\Api\V1\Public\BookingController;
 use App\Http\Controllers\Api\V1\Public\LocationController;
 use App\Http\Controllers\Api\V1\Public\ServiceController;
 use App\Http\Controllers\Api\V1\Public\StaffController;
-use App\Http\Middleware\ResolvePublicBusiness;
-use App\Http\Middleware\EnsureBusinessMembership;
 use App\Http\Middleware\EnsureActiveUser;
+use App\Http\Middleware\EnsureBusinessMembership;
+use App\Http\Middleware\ResolvePublicBusiness;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->middleware(ResolvePublicBusiness::class)->group(function () {
     Route::get('/services', [ServiceController::class, 'index'])->middleware('throttle:60,1');
@@ -28,13 +30,21 @@ Route::prefix('v1')->middleware(ResolvePublicBusiness::class)->group(function ()
 Route::prefix('v1/admin')
     ->middleware(['auth:sanctum', ResolvePublicBusiness::class, EnsureBusinessMembership::class])
     ->group(function () {
-        Route::get('/memberships', [\App\Http\Controllers\Api\V1\Admin\BusinessMembershipController::class, 'index']);
-        Route::put('/memberships', [\App\Http\Controllers\Api\V1\Admin\BusinessMembershipController::class, 'store']);
-        Route::delete('/memberships/{user}', [\App\Http\Controllers\Api\V1\Admin\BusinessMembershipController::class, 'destroy']);
-        Route::get('/bookings', [\App\Http\Controllers\Api\V1\Admin\BookingController::class, 'index']);
-        Route::get('/bookings/{booking}', [\App\Http\Controllers\Api\V1\Admin\BookingController::class, 'show']);
-        Route::post('/bookings/{booking}/reschedule', [\App\Http\Controllers\Api\V1\Admin\BookingController::class, 'reschedule']);
-        Route::post('/bookings/{booking}/{action}', [\App\Http\Controllers\Api\V1\Admin\BookingController::class, 'transition'])
+        Route::get('/memberships', [BusinessMembershipController::class, 'index']);
+        Route::put('/memberships', [BusinessMembershipController::class, 'store']);
+        Route::delete('/memberships/{user}', [BusinessMembershipController::class, 'destroy']);
+        Route::get('/notifications', [NotificationController::class, 'index']);
+        Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+        Route::patch('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
+        Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+        Route::get('/notification-preferences', [NotificationController::class, 'preferences']);
+        Route::put('/notification-preferences', [NotificationController::class, 'updatePreferences']);
+        Route::get('/notification-settings', [NotificationController::class, 'settings']);
+        Route::put('/notification-settings', [NotificationController::class, 'updateSettings']);
+        Route::get('/bookings', [App\Http\Controllers\Api\V1\Admin\BookingController::class, 'index']);
+        Route::get('/bookings/{booking}', [App\Http\Controllers\Api\V1\Admin\BookingController::class, 'show']);
+        Route::post('/bookings/{booking}/reschedule', [App\Http\Controllers\Api\V1\Admin\BookingController::class, 'reschedule']);
+        Route::post('/bookings/{booking}/{action}', [App\Http\Controllers\Api\V1\Admin\BookingController::class, 'transition'])
             ->whereIn('action', ['confirm', 'cancel', 'check-in', 'complete', 'no-show']);
     });
 

@@ -160,6 +160,8 @@ final class RescheduleBooking
                     'new_starts_at' => $booking->starts_at->format(DATE_ATOM),
                     'old_staff_id' => $oldStaffId,
                     'new_staff_id' => $booking->staff_id,
+                    'old_staff_user_id' => $oldStaff->user_id,
+                    'new_staff_user_id' => $staff->user_id,
                     'old_location_id' => $oldLocationId,
                     'new_location_id' => $booking->location_id,
                 ],

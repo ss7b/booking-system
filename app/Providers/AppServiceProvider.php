@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Domain\Notifications\ProcessBookingNotification;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +21,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        foreach (['BookingHeld', 'BookingConfirmed', 'BookingRescheduled', 'BookingCancelled'] as $eventName) {
+            Event::listen($eventName, function (array $payload) use ($eventName): void {
+                app(ProcessBookingNotification::class)->handle($eventName, $payload);
+            });
+        }
     }
 }

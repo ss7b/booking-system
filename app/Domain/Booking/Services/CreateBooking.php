@@ -45,6 +45,11 @@ final class CreateBooking
         ?string $actorId = null,
     ): BookingCreationResult {
         return DB::transaction(function () use ($business, $location, $service, $staff, $start, $customerData, $notes, $hold, $source, $actorType, $actorId): BookingCreationResult {
+            Business::query()
+                ->whereKey($business->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
             if (
                 (string) $location->business_id !== (string) $business->getKey()
                 || (string) $service->business_id !== (string) $business->getKey()
@@ -64,6 +69,60 @@ final class CreateBooking
             $end = $start->add(new DateInterval('PT'.(int) $service->duration_minutes.'M'));
             $occupiedStart = $start->modify('-'.(int) $service->buffer_before_minutes.' minutes');
             $occupiedEnd = $end->modify('+'.(int) $service->buffer_after_minutes.' minutes');
+
+            $phone = trim((string) $customerData['phone']);
+            $normalizedPhone = preg_replace('/\D+/', '', $phone);
+            $normalizedPhone = $normalizedPhone !== '' ? $normalizedPhone : null;
+            $email = strtolower(trim((string) ($customerData['email'] ?? '')));
+            $email = $email !== '' ? $email : null;
+
+            $customerQuery = Customer::query()->where('business_id', $business->getKey());
+            if ($normalizedPhone !== null || $email !== null) {
+                $customerQuery->where(function ($query) use ($normalizedPhone, $email): void {
+                    if ($normalizedPhone !== null) {
+                        $query->where('normalized_phone', $normalizedPhone);
+                    }
+
+                    if ($email !== null) {
+                        if ($normalizedPhone !== null) {
+                            $query->orWhere('email', $email);
+                        } else {
+                            $query->where('email', $email);
+                        }
+                    }
+                });
+            }
+
+            $matches = $normalizedPhone !== null || $email !== null
+                ? $customerQuery->lockForUpdate()->get()
+                : collect();
+
+            if ($matches->count() > 1) {
+                throw new DomainException('CUSTOMER_CONTACT_CONFLICT');
+            }
+
+            $accessToken = Str::random(64);
+
+            $customer = $matches->first() ?? Customer::query()->create([
+                'business_id' => $business->getKey(),
+                'name' => $customerData['name'],
+                'phone' => $phone,
+                'normalized_phone' => $normalizedPhone,
+                'email' => $email,
+            ]);
+
+            if ($this->conflicts->hasCustomerConflict($business, (string) $customer->getKey(), $start, $end)) {
+                throw new DomainException('CUSTOMER_BOOKING_OVERLAP');
+            }
+
+            if ($this->conflicts->hasCustomerServiceOnDate(
+                $business,
+                (string) $customer->getKey(),
+                (string) $service->getKey(),
+                $localStart,
+            )) {
+                throw new DomainException('CUSTOMER_SERVICE_DAILY_LIMIT');
+            }
 
             $this->lockManager->lockForStaffRange(
                 $business,
@@ -88,17 +147,6 @@ final class CreateBooking
                 throw new DomainException('SLOT_UNAVAILABLE');
             }
 
-            $phone = (string) $customerData['phone'];
-            $accessToken = Str::random(64);
-
-            $customer = Customer::query()->create([
-                'business_id' => $business->getKey(),
-                'name' => $customerData['name'],
-                'phone' => $phone,
-                'normalized_phone' => preg_replace('/\D+/', '', $phone),
-                'email' => $customerData['email'] ?? null,
-            ]);
-
             $status = $hold ? BookingStatus::Held : BookingStatus::Confirmed;
             $booking = Booking::query()->create([
                 'business_id' => $business->getKey(),
@@ -121,6 +169,7 @@ final class CreateBooking
                 'access_token_hash' => Hash::make($accessToken),
                 'notes' => $notes,
                 'confirmed_at' => $hold ? null : now(),
+                'metadata' => ['customer_contact' => ['phone' => $phone, 'email' => $email]],
             ]);
 
             BookingStatusHistory::query()->create([

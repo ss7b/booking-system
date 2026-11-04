@@ -159,7 +159,14 @@ class BookingResource extends Resource
 
                             Notification::make()->title('Booking created')->body($result->booking->reference)->success()->send();
                         } catch (DomainException $exception) {
-                            Notification::make()->title('Booking was not created')->body($exception->getMessage())->danger()->send();
+                            $message = match ($exception->getMessage()) {
+                                'CUSTOMER_CONTACT_CONFLICT' => 'Customer contact details match multiple customer records.',
+                                'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
+                                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'You already have an active booking for this service on the selected date.',
+                                default => $exception->getMessage(),
+                            };
+
+                            Notification::make()->title('Booking was not created')->body($message)->danger()->send();
                         }
                     }),
             ])
@@ -250,7 +257,13 @@ class BookingResource extends Resource
 
                             Notification::make()->title('Booking rescheduled')->body($updated->reference)->success()->send();
                         } catch (DomainException $exception) {
-                            Notification::make()->title('Booking was not rescheduled')->body($exception->getMessage())->danger()->send();
+                            $message = match ($exception->getMessage()) {
+                                'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
+                                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'You already have an active booking for this service on the selected date.',
+                                default => $exception->getMessage(),
+                            };
+
+                            Notification::make()->title('Booking was not rescheduled')->body($message)->danger()->send();
                         }
                     }),
             ])

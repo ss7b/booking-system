@@ -172,6 +172,133 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
         }
     }
 
+    public function test_concurrent_same_service_bookings_on_different_staff_reuse_customer_and_only_one_succeeds(): void
+    {
+        $this->assertSame('mysql', DB::connection()->getDriverName());
+        $this->assertSame('booking_test', DB::connection()->getDatabaseName(), 'Concurrency tests must only use the isolated booking_test database.');
+
+        $business = Business::query()->create([
+            'name' => 'Customer Concurrency Business',
+            'slug' => 'customer-concurrency-'.Str::lower(Str::random(12)),
+            'timezone' => 'Asia/Riyadh',
+            'default_currency' => 'SAR',
+            'is_active' => true,
+        ]);
+        $calendar = AvailabilityCalendar::query()->create([
+            'business_id' => $business->getKey(),
+            'name' => 'Customer Concurrency Calendar',
+            'timezone' => 'Asia/Riyadh',
+        ]);
+        $date = CarbonImmutable::now('Asia/Riyadh')->addDays(7)->toDateString();
+        $calendar->rules()->create([
+            'day_of_week' => CarbonImmutable::parse($date, 'Asia/Riyadh')->dayOfWeek,
+            'start_time' => '08:00:00',
+            'end_time' => '12:00:00',
+        ]);
+        $location = Location::query()->create([
+            'business_id' => $business->getKey(),
+            'calendar_id' => $calendar->getKey(),
+            'name' => 'Customer Concurrency Location',
+            'slug' => 'customer-concurrency-'.Str::lower(Str::random(12)),
+            'timezone' => 'Asia/Riyadh',
+            'is_active' => true,
+        ]);
+        $service = Service::query()->create([
+            'business_id' => $business->getKey(),
+            'name' => 'Customer Concurrency Service',
+            'slug' => 'customer-concurrency-'.Str::lower(Str::random(12)),
+            'duration_minutes' => 30,
+            'buffer_before_minutes' => 0,
+            'buffer_after_minutes' => 0,
+            'slot_interval_minutes' => 15,
+            'min_notice_minutes' => 0,
+            'max_advance_days' => 30,
+            'price_minor' => 10000,
+            'currency' => 'SAR',
+            'is_active' => true,
+        ]);
+        $staffMembers = collect(['First', 'Second'])->map(function (string $name) use ($business, $calendar, $service, $location): Staff {
+            $staff = Staff::query()->create([
+                'business_id' => $business->getKey(),
+                'calendar_id' => $calendar->getKey(),
+                'name' => $name.' Customer Concurrency Staff',
+                'slug' => 'customer-concurrency-'.Str::lower(Str::random(12)),
+                'status' => 'active',
+            ]);
+            $staff->services()->sync([$service->getKey()]);
+            $staff->locations()->sync([$location->getKey() => ['is_active' => true]]);
+
+            return $staff;
+        });
+        $location->services()->sync([$service->getKey()]);
+
+        $businessId = (string) $business->getKey();
+        $barrierPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'customer-race-'.Str::random(20);
+        $workerPaths = [$barrierPath.'-first-ready', $barrierPath.'-second-ready'];
+        $startedPaths = [$barrierPath.'-first-started', $barrierPath.'-second-started'];
+        $workers = [];
+
+        try {
+            DB::beginTransaction();
+            Business::query()->whereKey($businessId)->lockForUpdate()->firstOrFail();
+
+            foreach ([['staff' => $staffMembers[0], 'time' => '09:00'], ['staff' => $staffMembers[1], 'time' => '10:00']] as $index => $workerData) {
+                $worker = new Process([PHP_BINARY, base_path('tests/Support/booking-concurrency-worker.php')], base_path());
+                $worker->setInput(json_encode([
+                    'business_id' => $businessId,
+                    'location_id' => (string) $location->getKey(),
+                    'service_id' => (string) $service->getKey(),
+                    'staff_id' => (string) $workerData['staff']->getKey(),
+                    'start' => (new DateTimeImmutable($date.' '.$workerData['time'].':00', new DateTimeZone('Asia/Riyadh')))->format(DATE_ATOM),
+                    'phone' => '9665000001234',
+                    'barrier' => $barrierPath,
+                    'ready' => $workerPaths[$index],
+                    'started' => $startedPaths[$index],
+                ], JSON_THROW_ON_ERROR));
+                $worker->start();
+                $workers[] = $worker;
+            }
+
+            $this->waitForFiles($workerPaths, $workers);
+            file_put_contents($barrierPath, 'go');
+            $this->waitForFiles($startedPaths, $workers);
+            $this->waitForLockWaiters(2, $workers);
+            DB::commit();
+
+            $statuses = [];
+            foreach ($workers as $worker) {
+                $worker->wait();
+                $this->assertSame(0, $worker->getExitCode(), $worker->getErrorOutput());
+                $statuses[] = json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR)['status'];
+            }
+
+            $this->assertSame(1, count(array_filter($statuses, static fn (string $status): bool => $status === 'created')), json_encode($statuses));
+            $this->assertSame(1, count(array_filter($statuses, static fn (string $status): bool => $status === 'customer_service_daily_limit')), json_encode($statuses));
+            $this->assertSame(1, DB::table('customers')->where('business_id', $businessId)->count());
+            $customerIds = DB::table('bookings')->where('business_id', $businessId)->pluck('customer_id')->unique();
+            $this->assertCount(1, $customerIds);
+            $this->assertSame(1, DB::table('bookings')->where('business_id', $businessId)->count());
+        } finally {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            foreach ($workers as $worker) {
+                if ($worker->isRunning()) {
+                    $worker->stop(1);
+                }
+            }
+
+            $this->deleteBusinessFixture($businessId);
+
+            foreach (array_merge([$barrierPath], $workerPaths, $startedPaths) as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            }
+        }
+    }
+
     private function waitForFiles(array $paths, array $workers): void
     {
         $deadline = microtime(true) + 15;
@@ -199,7 +326,7 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
 
         while (microtime(true) < $deadline) {
             $waiting = (int) DB::selectOne(
-                "SELECT COUNT(*) AS aggregate FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND INFO LIKE 'insert ignore into `booking_day_locks`%'",
+                "SELECT COUNT(*) AS aggregate FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND (INFO LIKE 'select * from `businesses` where `businesses`.`id` = % for update' OR INFO LIKE 'insert ignore into `booking_day_locks`%')",
             )->aggregate;
             if ($waiting >= $expected) {
                 return;
@@ -222,7 +349,7 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
             $processes = [];
         }
 
-        throw new \RuntimeException('Both booking workers did not block on the held MySQL booking-day lock. Transactions: '.json_encode($transactions).'; processes: '.json_encode($processes));
+        throw new \RuntimeException('Both booking workers did not reach a held database lock. Transactions: '.json_encode($transactions).'; processes: '.json_encode($processes));
     }
 
     private function deleteBusinessFixture(string $businessId): void

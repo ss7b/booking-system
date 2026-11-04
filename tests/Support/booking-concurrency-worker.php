@@ -53,10 +53,20 @@ try {
 
     echo json_encode(['status' => 'created', 'booking_id' => $result->booking->getKey()], JSON_THROW_ON_ERROR);
 } catch (DomainException $exception) {
-    if ($exception->getMessage() !== 'SLOT_UNAVAILABLE') {
+    if (! in_array($exception->getMessage(), [
+        'SLOT_UNAVAILABLE',
+        'CUSTOMER_BOOKING_OVERLAP',
+        'CUSTOMER_SERVICE_DAILY_LIMIT',
+    ], true)) {
         fwrite(STDERR, $exception->getMessage());
         exit(1);
     }
 
-    echo json_encode(['status' => 'slot_unavailable'], JSON_THROW_ON_ERROR);
+    $status = match ($exception->getMessage()) {
+        'CUSTOMER_BOOKING_OVERLAP' => 'customer_booking_overlap',
+        'CUSTOMER_SERVICE_DAILY_LIMIT' => 'customer_service_daily_limit',
+        default => 'slot_unavailable',
+    };
+
+    echo json_encode(['status' => $status], JSON_THROW_ON_ERROR);
 }

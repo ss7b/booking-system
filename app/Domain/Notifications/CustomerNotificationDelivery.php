@@ -462,6 +462,19 @@ final class CustomerNotificationDelivery
             return null;
         }
 
+        $contacts = $notification->booking?->metadata['customer_contact'] ?? null;
+        if (is_array($contacts)) {
+            if ($channel === 'email') {
+                $email = $contacts['email'] ?? null;
+
+                return filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
+            }
+
+            $phone = preg_replace('/[^+\d]/', '', (string) ($contacts['phone'] ?? ''));
+
+            return preg_match('/^\+[1-9]\d{7,14}$/', $phone) ? $phone : null;
+        }
+
         if ($channel === 'email') {
             return filter_var($customer->email, FILTER_VALIDATE_EMAIL) ? $customer->email : null;
         }

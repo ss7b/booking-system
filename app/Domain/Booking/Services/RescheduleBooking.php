@@ -37,6 +37,11 @@ final class RescheduleBooking
         ?string $reason = null,
     ): Booking {
         return DB::transaction(function () use ($business, $booking, $location, $staff, $start, $actorType, $actorId, $reason): Booking {
+            Business::query()
+                ->whereKey($business->getKey())
+                ->lockForUpdate()
+                ->firstOrFail();
+
             $booking = Booking::query()
                 ->where('business_id', $business->getKey())
                 ->lockForUpdate()
@@ -78,6 +83,26 @@ final class RescheduleBooking
             $end = $start->add(new DateInterval('PT'.(int) $service->duration_minutes.'M'));
             $occupiedStart = $start->modify('-'.(int) $service->buffer_before_minutes.' minutes');
             $occupiedEnd = $end->modify('+'.(int) $service->buffer_after_minutes.' minutes');
+
+            if ($this->conflicts->hasCustomerConflict(
+                $business,
+                (string) $booking->customer_id,
+                $start,
+                $end,
+                (string) $booking->getKey(),
+            )) {
+                throw new DomainException('CUSTOMER_BOOKING_OVERLAP');
+            }
+
+            if ($this->conflicts->hasCustomerServiceOnDate(
+                $business,
+                (string) $booking->customer_id,
+                (string) $booking->service_id,
+                $localStart,
+                (string) $booking->getKey(),
+            )) {
+                throw new DomainException('CUSTOMER_SERVICE_DAILY_LIMIT');
+            }
 
             $this->lockManager->lockStaffRanges($business, [
                 [

@@ -299,6 +299,49 @@ class BookingNotificationProcessingTest extends TestCase
         $this->assertDatabaseCount('customer_notifications', 3);
     }
 
+    public function test_customer_notifications_do_not_fall_back_to_old_contacts_for_new_bookings(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $booking->customer->update(['email' => 'previous@example.test']);
+        $booking->metadata = ['customer_contact' => ['phone' => '0500000000', 'email' => null]];
+        $booking->save();
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['email']['enabled'] = true;
+        $config['channels']['email']['credentials'] = [
+            'host' => 'smtp.example.test',
+            'port' => 587,
+            'from_address' => 'bookings@example.test',
+        ];
+        $config['templates']['booking.reminder']['email']['enabled'] = true;
+        $settings->settings = $config;
+        $settings->save();
+
+        $notification = CustomerNotification::query()->create([
+            'business_id' => $business->getKey(),
+            'booking_id' => $booking->getKey(),
+            'customer_id' => $booking->customer_id,
+            'event_type' => 'booking.reminder',
+            'idempotency_key' => hash('sha256', 'contact-snapshot-test'),
+            'channels' => ['email'],
+            'appointment_starts_at' => $booking->starts_at,
+            'appointment_fingerprint' => app(CustomerNotificationService::class)->appointmentFingerprint($booking),
+            'status' => 'queued',
+        ]);
+
+        app(CustomerNotificationDelivery::class)->deliver((string) $notification->getKey());
+
+        $this->assertDatabaseHas('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'channel' => 'email',
+            'status' => 'skipped',
+            'error_code' => 'invalid_recipient',
+        ]);
+        Queue::assertNothingPushed();
+    }
+
     public function test_customer_notification_falls_back_after_provider_rejection_and_tracks_delivery_states(): void
     {
         Queue::fake();

@@ -79,9 +79,19 @@ class BookingController extends Controller
         } catch (\Symfony\Component\HttpKernel\Exception\ConflictHttpException) {
             return response()->json(['message' => 'The idempotency key was reused with a different payload.', 'code' => 'IDEMPOTENCY_CONFLICT'], 409);
         } catch (DomainException $exception) {
-            $code = $exception->getMessage() === 'SLOT_UNAVAILABLE' ? 'SLOT_UNAVAILABLE' : 'INVALID_BOOKING_TRANSITION';
+            $code = match ($exception->getMessage()) {
+                'SLOT_UNAVAILABLE' => 'SLOT_UNAVAILABLE',
+                'CUSTOMER_BOOKING_OVERLAP' => 'CUSTOMER_BOOKING_OVERLAP',
+                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'CUSTOMER_SERVICE_DAILY_LIMIT',
+                default => 'INVALID_BOOKING_TRANSITION',
+            };
+            $message = match ($exception->getMessage()) {
+                'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
+                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'You already have an active booking for this service on the selected date.',
+                default => $exception->getMessage(),
+            };
 
-            return response()->json(['message' => $exception->getMessage(), 'code' => $code], 409);
+            return response()->json(['message' => $message, 'code' => $code], 409);
         }
     }
 

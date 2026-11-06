@@ -34,6 +34,7 @@ use Laravel\Sanctum\Sanctum;
 use Livewire\Livewire;
 use Tests\TestCase;
 
+
 class BookingNotificationProcessingTest extends TestCase
 {
     use RefreshDatabase;
@@ -368,6 +369,28 @@ class BookingNotificationProcessingTest extends TestCase
             'Your booking BK-123 is confirmed.',
             $notifications->renderMessage($template, $data, null),
         );
+    }
+
+    public function test_email_preparation_failure_is_permanent_and_does_not_retry(): void
+    {
+        [, , $notification] = $this->makeEmailNotificationFixture([
+            'booking_management_url' => 'not-a-valid-url',
+        ]);
+        Queue::fake();
+
+        app(CustomerNotificationDelivery::class)->deliver((string) $notification->getKey());
+
+        $this->assertSame('failed', $notification->fresh()->status);
+        $this->assertDatabaseHas('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'status' => 'permanent',
+            'error_code' => 'email_preparation_failed',
+        ]);
+        $this->assertDatabaseMissing('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'error_code' => 'delivery_outcome_unknown',
+        ]);
+        Queue::assertNothingPushed();
     }
 
     public function test_delayed_confirmation_is_superseded_after_rescheduling_and_new_sms_contains_only_the_new_link(): void
@@ -1435,5 +1458,43 @@ class BookingNotificationProcessingTest extends TestCase
         ]);
 
         return [$business, $location, $booking];
+    }
+
+    private function makeEmailNotificationFixture(array $businessMetadata = []): array
+    {
+        [$business, , $booking] = $this->makeBookingFixture();
+        $booking->customer->update(['email' => 'recipient@example.test']);
+        $business->forceFill(['metadata' => $businessMetadata])->save();
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $configuration = $settings->settings;
+        $configuration['channels']['email'] = [
+            'enabled' => true,
+            'credentials' => [
+                'host' => 'smtp.example.test',
+                'port' => 587,
+                'from_address' => 'bookings@example.test',
+            ],
+        ];
+        $configuration['rules']['booking.created'] = ['enabled' => true, 'channels' => ['email']];
+        $settings->settings = $configuration;
+        $settings->save();
+
+        $event = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notification = app(CustomerNotificationService::class)->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $event->getKey(),
+        ]);
+
+        $this->assertNotNull($notification);
+
+        return [$business, $booking, $notification, $settings];
     }
 }

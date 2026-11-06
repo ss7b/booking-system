@@ -214,33 +214,47 @@ final class CustomerNotificationDelivery
         $this->advanceChannel($notification, $errorCode, 'Twilio confirmed the message was not delivered.');
     }
 
-    private function sendEmail(string $recipient, array $template, array $credentials, CustomerNotification $notification): array
-    {
-        $transport = new EsmtpTransport(
-            $credentials['host'],
-            (int) $credentials['port'],
-            ($credentials['encryption'] ?? 'starttls') === 'ssl',
-        );
-        $stream = $transport->getStream();
-        if ($stream instanceof SocketStream) {
-            $stream->setTimeout(10);
+    private function sendEmail(
+        string $recipient,
+        array $template,
+        array $credentials,
+        CustomerNotification $notification,
+    ): array {
+        try {
+            $transport = new EsmtpTransport(
+                $credentials['host'],
+                (int) $credentials['port'],
+                ($credentials['encryption'] ?? 'starttls') === 'ssl',
+            );
+            $stream = $transport->getStream();
+            if ($stream instanceof SocketStream) {
+                $stream->setTimeout(10);
+            }
+            $transport->setAutoTls(($credentials['encryption'] ?? 'starttls') === 'starttls');
+
+            if (($credentials['username'] ?? '') !== '') {
+                $transport->setUsername($credentials['username']);
+                $transport->setPassword($credentials['password'] ?? '');
+            }
+
+            $data = $this->notifications->templateData($notification->booking);
+            $managementUrl = $this->managementUrl($notification);
+            $email = (new Email)
+                ->from(new Address($credentials['from_address'], $credentials['from_name'] ?? $notification->business->name))
+                ->to($recipient)
+                ->subject($this->notifications->render((string) ($template['subject'] ?? ''), $data))
+                ->text($this->notifications->renderMessage((string) ($template['body'] ?? ''), $data, $managementUrl));
+
+            $mailer = new Mailer($transport);
+        } catch (\Throwable) {
+            return [
+                'status' => 'permanent',
+                'error_code' => 'email_preparation_failed',
+                'error_message' => 'Email could not be prepared. Check the notification configuration.',
+            ];
         }
-        $transport->setAutoTls(($credentials['encryption'] ?? 'starttls') === 'starttls');
 
-        if (($credentials['username'] ?? '') !== '') {
-            $transport->setUsername($credentials['username']);
-            $transport->setPassword($credentials['password'] ?? '');
-        }
-
-        $data = $this->notifications->templateData($notification->booking);
-        $managementUrl = $this->managementUrl($notification);
-        $email = (new Email)
-            ->from(new Address($credentials['from_address'], $credentials['from_name'] ?? $notification->business->name))
-            ->to($recipient)
-            ->subject($this->notifications->render((string) ($template['subject'] ?? ''), $data))
-            ->text($this->notifications->renderMessage((string) ($template['body'] ?? ''), $data, $managementUrl));
-
-        (new Mailer($transport))->send($email);
+        $mailer->send($email);
 
         return ['status' => 'accepted'];
     }

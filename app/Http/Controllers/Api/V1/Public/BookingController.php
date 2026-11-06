@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Public;
 
+use App\Domain\Booking\Services\BookingManagementLink;
 use App\Domain\Booking\Services\CreateBooking;
 use App\Domain\Booking\Services\IdempotentMutation;
 use App\Domain\Booking\Services\RescheduleBooking;
@@ -16,6 +17,7 @@ use App\Models\Staff;
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -130,50 +132,77 @@ class BookingController extends Controller
         }
     }
 
-    public function show(Request $request, string $reference): JsonResponse
+    public function show(Request $request, string $reference, BookingManagementLink $managementLinks): JsonResponse
     {
-        $booking = $this->authorizedBooking($request, $reference);
+        [$booking] = $this->authorizedBooking($request, $reference, $managementLinks);
 
         return response()->json(['data' => [
             'reference' => $booking->reference,
             'status' => $booking->status->value,
+            'service_id' => $booking->service_id,
+            'staff_id' => $booking->staff_id,
+            'location_id' => $booking->location_id,
+            'timezone' => $booking->location->timezone ?: $booking->business->timezone,
             'starts_at' => $booking->starts_at->setTimezone($booking->location->timezone ?: $booking->business->timezone)->format(DATE_ATOM),
             'ends_at' => $booking->ends_at->setTimezone($booking->location->timezone ?: $booking->business->timezone)->format(DATE_ATOM),
             'service' => ['name' => $booking->service_name_snapshot, 'duration_minutes' => $booking->duration_snapshot],
         ]]);
     }
 
-    public function confirm(Request $request, string $reference, IdempotentMutation $idempotency, TransitionBooking $transition): JsonResponse
-    {
-        return $this->transition($request, $reference, $idempotency, $transition, BookingStatus::Confirmed, null);
+    public function confirm(
+        Request $request,
+        string $reference,
+        IdempotentMutation $idempotency,
+        TransitionBooking $transition,
+        BookingManagementLink $managementLinks,
+    ): JsonResponse {
+        return $this->transition($request, $reference, $idempotency, $transition, $managementLinks, BookingStatus::Confirmed, null, false);
     }
 
-    public function cancel(Request $request, string $reference, IdempotentMutation $idempotency, TransitionBooking $transition): JsonResponse
-    {
+    public function cancel(
+        Request $request,
+        string $reference,
+        IdempotentMutation $idempotency,
+        TransitionBooking $transition,
+        BookingManagementLink $managementLinks,
+    ): JsonResponse {
         $data = $request->validate(['reason' => ['sometimes', 'nullable', 'string', 'max:255']]);
 
-        return $this->transition($request, $reference, $idempotency, $transition, BookingStatus::Cancelled, $data['reason'] ?? null);
+        return $this->transition($request, $reference, $idempotency, $transition, $managementLinks, BookingStatus::Cancelled, $data['reason'] ?? null);
     }
 
-    public function reschedule(Request $request, string $reference, IdempotentMutation $idempotency, RescheduleBooking $reschedule): JsonResponse
-    {
-        $data = $request->validate([
-            'staff_id' => ['required', 'ulid'],
-            'location_id' => ['required', 'ulid'],
+    public function reschedule(
+        Request $request,
+        string $reference,
+        IdempotentMutation $idempotency,
+        RescheduleBooking $reschedule,
+        BookingManagementLink $managementLinks,
+    ): JsonResponse {
+        [$booking, $viaManagementLink] = $this->authorizedBooking($request, $reference, $managementLinks);
+        if ($viaManagementLink && ($response = $this->managementMutationError($booking))) {
+            return $response;
+        }
+
+        $rules = [
+            'staff_id' => $viaManagementLink ? ['prohibited'] : ['required', 'ulid'],
+            'location_id' => $viaManagementLink ? ['prohibited'] : ['required', 'ulid'],
             'start' => ['required', 'date_format:Y-m-d\\TH:i:sP'],
             'reason' => ['sometimes', 'nullable', 'string', 'max:255'],
-        ]);
+        ];
+        if ($viaManagementLink) {
+            $rules['service_id'] = ['prohibited'];
+        }
+        $data = $request->validate($rules);
         $business = $request->attributes->get('business');
         abort_unless($business instanceof Business, 500);
-        $booking = $this->authorizedBooking($request, $reference);
         $location = Location::query()
             ->where('business_id', $business->getKey())
             ->where('is_active', true)
-            ->findOrFail($data['location_id']);
+            ->findOrFail($viaManagementLink ? $booking->location_id : $data['location_id']);
         $staff = Staff::query()
             ->where('business_id', $business->getKey())
             ->where('status', 'active')
-            ->findOrFail($data['staff_id']);
+            ->findOrFail($viaManagementLink ? $booking->staff_id : $data['staff_id']);
         $key = $request->header('Idempotency-Key');
 
         if (! is_string($key) || $key === '' || strlen($key) > 255) {
@@ -186,7 +215,7 @@ class BookingController extends Controller
                 $key,
                 $request->path(),
                 ['booking' => $reference, ...$data],
-                function () use ($reschedule, $business, $booking, $location, $staff, $data): JsonResponse {
+                function () use ($reschedule, $business, $booking, $location, $staff, $data, $viaManagementLink, $managementLinks): JsonResponse {
                     $updated = $reschedule->execute(
                         $business,
                         $booking,
@@ -198,7 +227,12 @@ class BookingController extends Controller
                         $data['reason'] ?? null,
                     );
 
-                    return response()->json(['data' => $this->bookingData($updated, $location->timezone ?: $business->timezone)]);
+                    $responseData = $this->bookingData($updated, $location->timezone ?: $business->timezone);
+                    if ($viaManagementLink) {
+                        $responseData['management_url'] = $managementLinks->createUrl($updated);
+                    }
+
+                    return response()->json(['data' => $responseData]);
                 },
             );
         } catch (ConflictHttpException) {
@@ -225,12 +259,17 @@ class BookingController extends Controller
         string $reference,
         IdempotentMutation $idempotency,
         TransitionBooking $transition,
+        BookingManagementLink $managementLinks,
         BookingStatus $target,
         ?string $reason,
+        bool $allowManagementLink = true,
     ): JsonResponse {
         $business = $request->attributes->get('business');
         abort_unless($business instanceof Business, 500);
-        $booking = $this->authorizedBooking($request, $reference);
+        [$booking, $viaManagementLink] = $this->authorizedBooking($request, $reference, $managementLinks, $allowManagementLink);
+        if ($viaManagementLink && ($response = $this->managementMutationError($booking))) {
+            return $response;
+        }
         $key = $request->header('Idempotency-Key');
 
         if (! is_string($key) || $key === '' || strlen($key) > 255) {
@@ -252,8 +291,15 @@ class BookingController extends Controller
         }
     }
 
-    private function authorizedBooking(Request $request, string $reference): Booking
-    {
+    /**
+     * @return array{Booking, bool}
+     */
+    private function authorizedBooking(
+        Request $request,
+        string $reference,
+        BookingManagementLink $managementLinks,
+        bool $allowManagementLink = true,
+    ): array {
         $business = $request->attributes->get('business');
         abort_unless($business instanceof Business, 500);
         $token = $request->header('X-Booking-Access-Token');
@@ -264,9 +310,50 @@ class BookingController extends Controller
             ->where('reference', $reference)
             ->first();
 
-        abort_unless($booking && is_string($token) && Hash::check($token, $booking->access_token_hash ?? ''), 404);
+        abort_unless($booking, 404);
 
-        return $booking;
+        if (is_string($token) && Hash::check($token, $booking->access_token_hash ?? '')) {
+            return [$booking, false];
+        }
+
+        $managementToken = $request->header('X-Booking-Management-Token');
+        abort_unless($allowManagementLink && is_string($managementToken) && $managementToken !== '', 404);
+
+        $failure = $managementLinks->validationError($managementToken, $business, $booking);
+        if ($failure !== null) {
+            $status = $failure === 'BOOKING_MANAGEMENT_LINK_INVALID' ? 404 : 410;
+            $message = match ($failure) {
+                'BOOKING_MANAGEMENT_LINK_EXPIRED' => 'The booking management link has expired.',
+                'BOOKING_MANAGEMENT_LINK_REVOKED' => 'The booking management link is no longer valid.',
+                default => 'The booking management link is invalid.',
+            };
+
+            throw new HttpResponseException(response()->json([
+                'message' => $message,
+                'code' => $failure,
+            ], $status));
+        }
+
+        return [$booking, true];
+    }
+
+    private function managementMutationError(Booking $booking): ?JsonResponse
+    {
+        if (now()->greaterThanOrEqualTo($booking->starts_at)) {
+            return response()->json([
+                'message' => 'This booking can only be viewed after its start time.',
+                'code' => 'BOOKING_MANAGEMENT_READ_ONLY',
+            ], 409);
+        }
+
+        if ($booking->status !== BookingStatus::Confirmed) {
+            return response()->json([
+                'message' => 'This booking cannot be changed in its current state.',
+                'code' => 'INVALID_BOOKING_TRANSITION',
+            ], 409);
+        }
+
+        return null;
     }
 
     private function bookingData(Booking $booking, string $timezone): array

@@ -282,6 +282,15 @@ final class CustomerNotificationService
         }, $template) ?? $template;
     }
 
+    public function renderMessage(string $template, array $data, ?string $managementUrl): string
+    {
+        $message = $this->render($template, $data);
+
+        return $managementUrl === null
+            ? $message
+            : rtrim($message)."\nManage your booking: ".$managementUrl;
+    }
+
     private function queueNotification(
         Booking $booking,
         string $eventType,

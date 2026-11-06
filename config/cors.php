@@ -19,6 +19,7 @@ return [
         'Content-Type',
         'X-Business-Slug',
         'X-Booking-Access-Token',
+        'X-Booking-Management-Token',
         'Idempotency-Key',
     ],
     'exposed_headers' => [],

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Domain\Booking\Services\BookingManagementLink;
 use App\Domain\Notifications\CustomerNotificationDelivery;
 use App\Domain\Notifications\CustomerNotificationService;
 use App\Domain\Notifications\NotificationCenter;
@@ -24,6 +25,7 @@ use Carbon\CarbonInterface;
 use Filament\Facades\Filament;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -297,6 +299,329 @@ class BookingNotificationProcessingTest extends TestCase
             'event_id' => $rescheduledEvent->getKey(),
         ]));
         $this->assertDatabaseCount('customer_notifications', 3);
+    }
+
+    public function test_confirmed_customer_notification_includes_management_link_in_sms(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $business->forceFill(['metadata' => ['booking_management_url' => 'https://clinic.example/manage-booking']])->save();
+        $booking->customer->update(['phone' => '+15551234567']);
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        $config['rules']['booking.created'] = ['enabled' => true, 'channels' => ['sms']];
+        $config['templates']['booking.created']['sms']['enabled'] = true;
+        $settings->settings = $config;
+        $settings->save();
+
+        $event = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notification = app(CustomerNotificationService::class)->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $event->getKey(),
+        ]);
+        $this->assertNotNull($notification);
+
+        Http::fake(['api.twilio.com/*' => Http::response(['code' => 21211], 400)]);
+        app(CustomerNotificationDelivery::class)->deliver((string) $notification->getKey());
+
+        $url = app(BookingManagementLink::class)->createUrl($booking->fresh());
+        $this->assertIsString($url);
+        Http::assertSent(fn (Request $request): bool => str_contains($request['Body'], $url));
+        $this->assertSame('failed', $notification->fresh()->status);
+        $attempt = CustomerNotificationAttempt::query()->where('customer_notification_id', $notification->getKey())->firstOrFail();
+        $this->assertSame('permanent', $attempt->status);
+        $this->assertStringNotContainsString($url, (string) $attempt->error_message);
+        $this->assertDatabaseMissing('customer_notification_attempts', [
+            'customer_notification_id' => $notification->getKey(),
+            'error_message' => $url,
+        ]);
+    }
+
+    public function test_email_and_sms_message_rendering_appends_a_link_only_when_available(): void
+    {
+        $notifications = app(CustomerNotificationService::class);
+        $template = 'Your booking {booking_reference} is confirmed.';
+        $data = ['booking_reference' => 'BK-123'];
+        $url = 'https://clinic.example/manage-booking?reference=BK-123#management_token=signature';
+
+        $this->assertSame(
+            "Your booking BK-123 is confirmed.\nManage your booking: ".$url,
+            $notifications->renderMessage($template, $data, $url),
+        );
+        $this->assertSame(
+            'Your booking BK-123 is confirmed.',
+            $notifications->renderMessage($template, $data, null),
+        );
+    }
+
+    public function test_delayed_confirmation_is_superseded_after_rescheduling_and_new_sms_contains_only_the_new_link(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $business->forceFill(['metadata' => ['booking_management_url' => 'https://clinic.example/manage-booking']])->save();
+        $booking->customer->update(['phone' => '+15551234567']);
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        foreach (['booking.created', 'booking.rescheduled'] as $eventType) {
+            $config['rules'][$eventType] = ['enabled' => true, 'channels' => ['sms']];
+            $config['templates'][$eventType]['sms']['enabled'] = true;
+        }
+        $settings->settings = $config;
+        $settings->save();
+
+        $oldEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notifications = app(CustomerNotificationService::class);
+        $oldNotification = $notifications->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $oldEvent->getKey(),
+        ]);
+        $oldUrl = app(BookingManagementLink::class)->createUrl($booking);
+        $this->assertNotNull($oldNotification);
+
+        $booking->starts_at = $booking->starts_at->addHour();
+        $booking->ends_at = $booking->ends_at->addHour();
+        $booking->occupied_starts_at = $booking->starts_at;
+        $booking->occupied_ends_at = $booking->ends_at;
+        $metadata = $booking->metadata ?? [];
+        $metadata['booking_management_version'] = 1;
+        $booking->metadata = $metadata;
+        $booking->save();
+
+        $rescheduledEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingRescheduled',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now()->addSecond(),
+        ]));
+        $rescheduledNotification = $notifications->processOutboxEvent('BookingRescheduled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $rescheduledEvent->getKey(),
+        ]);
+        $this->assertNotNull($rescheduledNotification);
+
+        Http::fake(['api.twilio.com/*' => Http::response(['sid' => 'SM'.str_repeat('d', 32)], 201)]);
+        $delivery = app(CustomerNotificationDelivery::class);
+        $delivery->deliver((string) $oldNotification->getKey());
+        $this->assertSame('superseded', $oldNotification->fresh()->status);
+        Http::assertNothingSent();
+
+        $delivery->deliver((string) $rescheduledNotification->getKey());
+        $newUrl = app(BookingManagementLink::class)->createUrl($booking->fresh());
+        $this->assertNotNull($newUrl);
+        $this->assertNotSame($oldUrl, $newUrl);
+        Http::assertSent(fn (Request $request): bool => str_contains($request['Body'], $newUrl)
+            && ! str_contains($request['Body'], (string) parse_url($oldUrl, PHP_URL_FRAGMENT)));
+        $this->assertSame('accepted', $rescheduledNotification->fresh()->status);
+    }
+
+    public function test_delayed_confirmation_is_superseded_after_cancellation(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $business->forceFill(['metadata' => ['booking_management_url' => 'https://clinic.example/manage-booking']])->save();
+        $booking->customer->update(['phone' => '+15551234567']);
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        foreach (['booking.created', 'booking.cancelled'] as $eventType) {
+            $config['rules'][$eventType] = ['enabled' => true, 'channels' => ['sms']];
+            $config['templates'][$eventType]['sms']['enabled'] = true;
+        }
+        $settings->settings = $config;
+        $settings->save();
+
+        $confirmedEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notifications = app(CustomerNotificationService::class);
+        $confirmation = $notifications->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $confirmedEvent->getKey(),
+        ]);
+        $this->assertNotNull($confirmation);
+
+        $booking->status = BookingStatus::Cancelled;
+        $booking->save();
+        $cancelledEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingCancelled',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now()->addSecond(),
+        ]));
+        $cancellation = $notifications->processOutboxEvent('BookingCancelled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $cancelledEvent->getKey(),
+        ]);
+        $this->assertNotNull($cancellation);
+
+        Http::fake(['api.twilio.com/*' => Http::response(['sid' => 'SM'.str_repeat('e', 32)], 201)]);
+        $delivery = app(CustomerNotificationDelivery::class);
+        $delivery->deliver((string) $confirmation->getKey());
+        $this->assertSame('superseded', $confirmation->fresh()->status);
+        Http::assertNothingSent();
+
+        $delivery->deliver((string) $cancellation->getKey());
+        Http::assertSentCount(1);
+        Http::assertSent(fn (Request $request): bool => str_contains($request['Body'], 'Cancelled:')
+            && ! str_contains($request['Body'], 'Manage your booking:'));
+    }
+
+    public function test_cancellation_and_missing_management_url_do_not_add_a_management_link_to_sms(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $booking->customer->update(['phone' => '+15551234567']);
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['sms'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        foreach (['booking.created', 'booking.cancelled'] as $eventType) {
+            $config['rules'][$eventType] = ['enabled' => true, 'channels' => ['sms']];
+            $config['templates'][$eventType]['sms']['enabled'] = true;
+        }
+        $settings->settings = $config;
+        $settings->save();
+
+        $confirmedEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notifications = app(CustomerNotificationService::class);
+        $confirmation = $notifications->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $confirmedEvent->getKey(),
+        ]);
+
+        Http::fake(['api.twilio.com/*' => Http::response(['sid' => 'SM'.str_repeat('e', 32)], 201)]);
+        $delivery = app(CustomerNotificationDelivery::class);
+        $delivery->deliver((string) $confirmation->getKey());
+        Http::assertSent(fn (Request $request): bool => str_contains($request['Body'], 'Booking confirmed:')
+            && ! str_contains($request['Body'], 'Manage your booking:'));
+
+        $booking->status = BookingStatus::Cancelled;
+        $booking->save();
+        $cancelledEvent = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingCancelled',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now()->addSecond(),
+        ]));
+        $cancellation = $notifications->processOutboxEvent('BookingCancelled', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $cancelledEvent->getKey(),
+        ]);
+        $this->assertNotNull($cancellation);
+
+        $delivery->deliver((string) $cancellation->getKey());
+        Http::assertSentCount(2);
+        Http::assertSent(fn (Request $request): bool => str_contains($request['Body'], 'Cancelled:')
+            && ! str_contains($request['Body'], 'Manage your booking:'));
+    }
+
+    public function test_whatsapp_uses_the_existing_four_approved_template_variables(): void
+    {
+        Queue::fake();
+        [$business, , $booking] = $this->makeBookingFixture();
+        $business->forceFill(['metadata' => ['booking_management_url' => 'https://clinic.example/manage-booking']])->save();
+        $booking->customer->update(['phone' => '+15551234567']);
+
+        $settings = app(CustomerNotificationService::class)->settings($business);
+        $config = $settings->settings;
+        $config['channels']['whatsapp'] = [
+            'enabled' => true,
+            'credentials' => [
+                'account_sid' => 'AC'.str_repeat('a', 32),
+                'auth_token' => 'test-token',
+                'from' => '+15557654321',
+            ],
+        ];
+        $config['rules']['booking.created'] = ['enabled' => true, 'channels' => ['whatsapp']];
+        $config['templates']['booking.created']['whatsapp']['enabled'] = true;
+        $config['templates']['booking.created']['whatsapp']['content_sid'] = 'HX'.str_repeat('b', 32);
+        $settings->settings = $config;
+        $settings->save();
+
+        $event = OutboxEvent::withoutEvents(fn (): OutboxEvent => OutboxEvent::query()->create([
+            'business_id' => $business->getKey(),
+            'event_type' => 'BookingConfirmed',
+            'aggregate_type' => 'Booking',
+            'aggregate_id' => $booking->getKey(),
+            'payload' => ['booking_id' => $booking->getKey()],
+            'occurred_at' => now(),
+        ]));
+        $notification = app(CustomerNotificationService::class)->processOutboxEvent('BookingConfirmed', [
+            'booking_id' => $booking->getKey(),
+            'event_id' => $event->getKey(),
+        ]);
+
+        Http::fake(['api.twilio.com/*' => Http::response(['sid' => 'SM'.str_repeat('f', 32)], 201)]);
+        app(CustomerNotificationDelivery::class)->deliver((string) $notification->getKey());
+
+        Http::assertSent(fn (Request $request): bool => $request['ContentSid'] === 'HX'.str_repeat('b', 32)
+            && count(json_decode($request['ContentVariables'], true, flags: JSON_THROW_ON_ERROR)) === 4);
+        $this->assertSame('accepted', $notification->fresh()->status);
     }
 
     public function test_customer_notifications_do_not_fall_back_to_old_contacts_for_new_bookings(): void

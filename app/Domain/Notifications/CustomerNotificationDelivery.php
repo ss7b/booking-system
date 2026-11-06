@@ -2,6 +2,7 @@
 
 namespace App\Domain\Notifications;
 
+use App\Domain\Booking\Services\BookingManagementLink;
 use App\Jobs\DeliverCustomerNotification;
 use App\Models\BusinessCustomerNotificationSettings;
 use App\Models\CustomerNotification;
@@ -21,7 +22,10 @@ use Symfony\Component\Mime\Email;
 
 final class CustomerNotificationDelivery
 {
-    public function __construct(private readonly CustomerNotificationService $notifications) {}
+    public function __construct(
+        private readonly CustomerNotificationService $notifications,
+        private readonly BookingManagementLink $managementLinks,
+    ) {}
 
     public function deliver(string $notificationId): void
     {
@@ -117,6 +121,15 @@ final class CustomerNotificationDelivery
             $this->recordSkipped($notification, $channel, 'whatsapp_template_required', 'WhatsApp requires an approved Twilio Content template.');
             $recoveryLock?->release();
             $this->advanceChannel($notification);
+
+            return;
+        }
+
+        $notification->unsetRelation('booking');
+        $notification->load(['booking.business', 'booking.location', 'booking.customer', 'customer']);
+        if (! $notification->booking || ! $this->notifications->isCurrent($notification)) {
+            $notification->forceFill(['status' => 'superseded', 'failed_at' => now()])->save();
+            $recoveryLock?->release();
 
             return;
         }
@@ -220,11 +233,12 @@ final class CustomerNotificationDelivery
         }
 
         $data = $this->notifications->templateData($notification->booking);
+        $managementUrl = $this->managementUrl($notification);
         $email = (new Email)
             ->from(new Address($credentials['from_address'], $credentials['from_name'] ?? $notification->business->name))
             ->to($recipient)
             ->subject($this->notifications->render((string) ($template['subject'] ?? ''), $data))
-            ->text($this->notifications->render((string) ($template['body'] ?? ''), $data));
+            ->text($this->notifications->renderMessage((string) ($template['body'] ?? ''), $data, $managementUrl));
 
         (new Mailer($transport))->send($email);
 
@@ -262,7 +276,11 @@ final class CustomerNotificationDelivery
                 '4' => $data['appointment_datetime'],
             ], JSON_THROW_ON_ERROR);
         } else {
-            $payload['Body'] = $this->notifications->render((string) ($template['body'] ?? ''), $data);
+            $payload['Body'] = $this->notifications->renderMessage(
+                (string) ($template['body'] ?? ''),
+                $data,
+                $this->managementUrl($notification),
+            );
         }
 
         $response = Http::withBasicAuth($credentials['account_sid'], $credentials['auth_token'])
@@ -288,6 +306,15 @@ final class CustomerNotificationDelivery
         }
 
         return ['status' => 'permanent', 'error_code' => $code, 'error_message' => 'Twilio rejected the message. Check recipient and provider configuration.'];
+    }
+
+    private function managementUrl(CustomerNotification $notification): ?string
+    {
+        if (! in_array($notification->event_type, ['booking.created', 'booking.rescheduled'], true)) {
+            return null;
+        }
+
+        return $this->managementLinks->createUrl($notification->booking);
     }
 
     private function retryOrAdvance(CustomerNotification $notification, string $channel, array $result): void

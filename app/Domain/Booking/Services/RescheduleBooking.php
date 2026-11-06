@@ -150,6 +150,9 @@ final class RescheduleBooking
             $booking->ends_at = $end->setTimezone(new DateTimeZone('UTC'));
             $booking->occupied_starts_at = $occupiedStart->setTimezone(new DateTimeZone('UTC'));
             $booking->occupied_ends_at = $occupiedEnd->setTimezone(new DateTimeZone('UTC'));
+            $metadata = $booking->metadata ?? [];
+            $metadata['booking_management_version'] = max(0, (int) ($metadata['booking_management_version'] ?? 0)) + 1;
+            $booking->metadata = $metadata;
             $booking->save();
 
             BookingStatusHistory::query()->create([

@@ -32,8 +32,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Laravel\Sanctum\Sanctum;
 use Livewire\Livewire;
+use Symfony\Component\Mime\Email;
 use Tests\TestCase;
-
 
 class BookingNotificationProcessingTest extends TestCase
 {
@@ -391,6 +391,98 @@ class BookingNotificationProcessingTest extends TestCase
             'error_code' => 'delivery_outcome_unknown',
         ]);
         Queue::assertNothingPushed();
+    }
+
+    public function test_booking_email_uses_shared_html_view_and_preserves_links_and_plain_text(): void
+    {
+        [$business, $booking, $notification, $settings] = $this->makeEmailNotificationFixture([
+            'booking_management_url' => 'https://clinic.example/manage-booking',
+        ]);
+        $business->forceFill(['name' => '<img src=x onerror=alert(1)>'])->save();
+        $booking->customer->update(['name' => '<script>alert(1)</script>']);
+        $booking->service_name_snapshot = '<b>Consultation</b>';
+        $booking->save();
+        $booking->refresh();
+        $notification->refresh();
+
+        $confirmationUrl = app(BookingManagementLink::class)->createUrl($booking);
+        $email = $this->buildCustomerEmail($notification, $settings->settings);
+        $html = (string) $email->getHtmlBody();
+
+        $this->assertStringContainsString('multipart/alternative', $email->toString());
+        $this->assertStringContainsString('dir="rtl"', $html);
+        $this->assertStringContainsString('تم تأكيد حجزك', $html);
+        $this->assertStringContainsString('تم تأكيد حجز موعدك بنجاح.', $html);
+        $this->assertStringContainsString('رقم الحجز', $html);
+        $this->assertStringContainsString('اسم العميل', $html);
+        $this->assertStringContainsString('الخدمة', $html);
+        $this->assertStringContainsString('الطبيب أو الموظف', $html);
+        $this->assertStringContainsString('الفرع', $html);
+        $this->assertStringContainsString('تاريخ الموعد', $html);
+        $this->assertStringContainsString('وقت الموعد', $html);
+        $this->assertStringContainsString('حالة الحجز', $html);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $html);
+        $this->assertStringContainsString('&lt;b&gt;Consultation&lt;/b&gt;', $html);
+        $this->assertStringContainsString('&lt;img src=x onerror=alert(1)&gt;', $html);
+        $this->assertStringNotContainsString('<script>alert(1)</script>', $html);
+        $this->assertStringNotContainsString('<img src=x', $html);
+        $this->assertStringContainsString($confirmationUrl, (string) $email->getTextBody());
+        $this->assertStringNotContainsString('<html', (string) $email->getTextBody());
+        $this->assertStringNotContainsString('<a ', $html);
+        $this->assertStringNotContainsString('href=', $html);
+        $escapedConfirmationUrl = htmlspecialchars($confirmationUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $this->assertMatchesRegularExpression(
+            '/<p\b[^>]*>\s*'.preg_quote($escapedConfirmationUrl, '/').'\s*<\/p>/',
+            $html,
+        );
+        $this->assertStringContainsString('#management_token=', $confirmationUrl);
+        $this->assertStringContainsString($confirmationUrl, html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        $booking->starts_at = $booking->starts_at->addHour();
+        $booking->ends_at = $booking->ends_at->addHour();
+        $booking->occupied_starts_at = $booking->starts_at;
+        $booking->occupied_ends_at = $booking->ends_at;
+        $metadata = $booking->metadata ?? [];
+        $metadata['booking_management_version'] = 1;
+        $booking->metadata = $metadata;
+        $booking->save();
+        $booking->refresh();
+        $notification->event_type = 'booking.rescheduled';
+        $rescheduledUrl = app(BookingManagementLink::class)->createUrl($booking);
+        $rescheduledHtml = (string) $this->buildCustomerEmail($notification, $settings->settings)->getHtmlBody();
+        $this->assertNotSame($confirmationUrl, $rescheduledUrl);
+        $this->assertStringContainsString('تم تحديث موعدك', $rescheduledHtml);
+        $this->assertStringContainsString('تم تحديث موعد حجزك بنجاح.', $rescheduledHtml);
+        $escapedRescheduledUrl = htmlspecialchars($rescheduledUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $this->assertMatchesRegularExpression(
+            '/<p\b[^>]*>\s*'.preg_quote($escapedRescheduledUrl, '/').'\s*<\/p>/',
+            $rescheduledHtml,
+        );
+        $this->assertStringNotContainsString('<a ', $rescheduledHtml);
+        $this->assertStringNotContainsString('href=', $rescheduledHtml);
+        $this->assertStringContainsString('#management_token=', $rescheduledUrl);
+        $this->assertStringNotContainsString($confirmationUrl, html_entity_decode($rescheduledHtml, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        $notification->event_type = 'booking.cancelled';
+        $booking->status = BookingStatus::Cancelled;
+        $booking->save();
+        $cancelledHtml = (string) $this->buildCustomerEmail($notification, $settings->settings)->getHtmlBody();
+        $this->assertStringContainsString('تم إلغاء حجزك', $cancelledHtml);
+        $this->assertStringContainsString('تم إلغاء حجز موعدك.', $cancelledHtml);
+        $this->assertStringNotContainsString('إدارة الحجز', $cancelledHtml);
+        $this->assertStringNotContainsString('clinic.example/manage-booking', $cancelledHtml);
+
+        $notification->event_type = 'booking.reminder';
+        $reminderHtml = (string) $this->buildCustomerEmail($notification, $settings->settings)->getHtmlBody();
+        $this->assertStringContainsString('تذكير بموعدك القادم', $reminderHtml);
+        $this->assertStringNotContainsString('إدارة الحجز', $reminderHtml);
+
+        [$secondBusiness, , $withoutUrl, $settingsWithoutUrl] = $this->makeEmailNotificationFixture();
+        $withoutUrlHtml = (string) $this->buildCustomerEmail($withoutUrl, $settingsWithoutUrl->settings)->getHtmlBody();
+        $this->assertStringNotContainsString('إدارة الحجز', $withoutUrlHtml);
+        $this->assertStringNotContainsString('href=', $withoutUrlHtml);
+        $this->assertStringContainsString($secondBusiness->name, $withoutUrlHtml);
+        $this->assertStringNotContainsString('&lt;img src=x onerror=alert(1)&gt;', $withoutUrlHtml);
     }
 
     public function test_delayed_confirmation_is_superseded_after_rescheduling_and_new_sms_contains_only_the_new_link(): void
@@ -1411,6 +1503,20 @@ class BookingNotificationProcessingTest extends TestCase
 
         $this->assertSame(5, DB::table('user_notifications')->where('user_id', $owner->getKey())->count());
         $this->assertSame(5, DB::table('user_notifications')->where('user_id', $owner->getKey())->distinct('booking_id')->count('booking_id'));
+    }
+
+    private function buildCustomerEmail(CustomerNotification $notification, array $settings): Email
+    {
+        $notification->load(['booking.business', 'booking.location', 'booking.customer', 'booking.staff', 'business']);
+        $method = new \ReflectionMethod(CustomerNotificationDelivery::class, 'createEmailMessage');
+
+        return $method->invoke(
+            app(CustomerNotificationDelivery::class),
+            $notification->customer->email,
+            $settings['templates'][$notification->event_type]['email'] ?? [],
+            $settings['channels']['email']['credentials'],
+            $notification,
+        );
     }
 
     private function makeBookingFixture(?CarbonInterface $startsAt = null): array

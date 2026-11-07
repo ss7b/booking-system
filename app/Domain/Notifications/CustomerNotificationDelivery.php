@@ -3,6 +3,7 @@
 namespace App\Domain\Notifications;
 
 use App\Domain\Booking\Services\BookingManagementLink;
+use App\Enums\BookingStatus;
 use App\Jobs\DeliverCustomerNotification;
 use App\Models\BusinessCustomerNotificationSettings;
 use App\Models\CustomerNotification;
@@ -237,13 +238,7 @@ final class CustomerNotificationDelivery
                 $transport->setPassword($credentials['password'] ?? '');
             }
 
-            $data = $this->notifications->templateData($notification->booking);
-            $managementUrl = $this->managementUrl($notification);
-            $email = (new Email)
-                ->from(new Address($credentials['from_address'], $credentials['from_name'] ?? $notification->business->name))
-                ->to($recipient)
-                ->subject($this->notifications->render((string) ($template['subject'] ?? ''), $data))
-                ->text($this->notifications->renderMessage((string) ($template['body'] ?? ''), $data, $managementUrl));
+            $email = $this->createEmailMessage($recipient, $template, $credentials, $notification);
 
             $mailer = new Mailer($transport);
         } catch (\Throwable) {
@@ -257,6 +252,71 @@ final class CustomerNotificationDelivery
         $mailer->send($email);
 
         return ['status' => 'accepted'];
+    }
+
+    private function createEmailMessage(
+        string $recipient,
+        array $template,
+        array $credentials,
+        CustomerNotification $notification,
+    ): Email {
+        $booking = $notification->booking;
+        $booking->loadMissing('staff');
+        $data = $this->notifications->templateData($booking);
+        $managementUrl = $this->managementUrl($notification);
+        $defaultBody = BusinessCustomerNotificationSettings::defaults()['templates'][$notification->event_type]['email']['body'] ?? '';
+        $templateBody = (string) ($template['body'] ?? '');
+        $customMessage = $templateBody !== $defaultBody
+            ? $this->notifications->render($templateBody, $data)
+            : null;
+
+        [$title, $message] = match ($notification->event_type) {
+            'booking.created' => ['تم تأكيد حجزك', 'تم تأكيد حجز موعدك بنجاح.'],
+            'booking.rescheduled' => ['تم تحديث موعدك', 'تم تحديث موعد حجزك بنجاح.'],
+            'booking.cancelled' => ['تم إلغاء حجزك', 'تم إلغاء حجز موعدك.'],
+            'booking.reminder' => ['تذكير بموعدك القادم', 'نذكّرك بموعدك القادم.'],
+            default => ['تفاصيل حجزك', 'تفاصيل حجزك.'],
+        };
+
+        $appointment = $booking->starts_at->timezone($data['timezone']);
+        $details = [
+            ['label' => 'رقم الحجز', 'value' => $data['booking_reference']],
+            ['label' => 'اسم العميل', 'value' => $data['customer_name']],
+            ['label' => 'الخدمة', 'value' => $data['service_name']],
+        ];
+        if ($booking->staff?->name) {
+            $details[] = ['label' => 'الطبيب أو الموظف', 'value' => $booking->staff->name];
+        }
+        if ($data['location_name'] !== '') {
+            $details[] = ['label' => 'الفرع', 'value' => $data['location_name']];
+        }
+        $details[] = ['label' => 'تاريخ الموعد', 'value' => $appointment->format('Y-m-d')];
+        $details[] = ['label' => 'وقت الموعد', 'value' => $appointment->format('H:i')];
+        $details[] = ['label' => 'حالة الحجز', 'value' => match ($booking->status) {
+            BookingStatus::Confirmed => 'مؤكد',
+            BookingStatus::Held => 'قيد الانتظار',
+            BookingStatus::CheckedIn => 'تم تسجيل الوصول',
+            BookingStatus::Completed => 'مكتمل',
+            BookingStatus::Cancelled => 'ملغى',
+            BookingStatus::NoShow => 'لم يحضر',
+            BookingStatus::Expired => 'منتهي',
+        }];
+
+        $html = view('emails.customer-booking-notification', [
+            'businessName' => $data['business_name'],
+            'title' => $title,
+            'message' => $message,
+            'customMessage' => $customMessage,
+            'details' => $details,
+            'managementUrl' => $managementUrl,
+        ])->render();
+
+        return (new Email)
+            ->from(new Address($credentials['from_address'], $credentials['from_name'] ?? $notification->business->name))
+            ->to($recipient)
+            ->subject($this->notifications->render((string) ($template['subject'] ?? ''), $data))
+            ->text($this->notifications->renderMessage($templateBody, $data, $managementUrl))
+            ->html($html);
     }
 
     private function sendTwilio(

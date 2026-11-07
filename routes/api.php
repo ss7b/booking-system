@@ -21,6 +21,7 @@ Route::prefix('v1')->middleware(ResolvePublicBusiness::class)->group(function ()
     Route::get('/services', [ServiceController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/locations', [LocationController::class, 'index'])->middleware('throttle:60,1');
     Route::get('/staff', [StaffController::class, 'index'])->middleware('throttle:60,1');
+    Route::get('/staff/{staff}/booking-context', [StaffController::class, 'bookingContext'])->middleware('throttle:60,1');
     Route::get('/availability/calendar', [AvailabilityController::class, 'calendar'])->middleware('throttle:60,1');
     Route::get('/availability', AvailabilityController::class)->middleware('throttle:60,1');
     Route::post('/booking-holds', [BookingController::class, 'hold'])->middleware('throttle:10,1');

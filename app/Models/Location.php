@@ -36,7 +36,9 @@ class Location extends BookingModel
 
     public function services(): BelongsToMany
     {
-        return $this->belongsToMany(Service::class, 'service_locations')->using(ServiceLocation::class);
+        return $this->belongsToMany(Service::class, 'service_locations')
+            ->using(ServiceLocation::class)
+            ->withPivot('booking_mode', 'capacity');
     }
 
     public function bookings(): HasMany

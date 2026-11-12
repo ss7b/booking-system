@@ -1,7 +1,13 @@
 <?php
 
 use App\Domain\Booking\Services\CreateBooking;
+use App\Domain\Booking\Services\RescheduleBooking;
+use App\Domain\Booking\Services\TransitionBooking;
+use App\Domain\Booking\Services\UpdateServiceLocationSettings;
+use App\Enums\BookingMode;
+use App\Enums\BookingStatus;
 use App\Models\Business;
+use App\Models\Booking;
 use App\Models\Location;
 use App\Models\Service;
 use App\Models\Staff;
@@ -34,39 +40,75 @@ file_put_contents($payload['started'], 'started');
 
 try {
     $business = Business::query()->findOrFail($payload['business_id']);
-    $location = Location::query()->findOrFail($payload['location_id']);
     $service = Service::query()->findOrFail($payload['service_id']);
-    $staff = Staff::query()->findOrFail($payload['staff_id']);
-    $result = app(CreateBooking::class)->execute(
-        $business,
-        $location,
-        $service,
-        $staff,
-        new DateTimeImmutable($payload['start']),
-        ['name' => 'Concurrency Test Customer', 'phone' => $payload['phone']],
-        null,
-        false,
-        'public',
-        'customer',
-        'concurrency-test',
-    );
+    $operation = $payload['operation'] ?? 'create';
+    $result = match ($operation) {
+        'create' => (static function () use ($payload, $business, $service) {
+            $location = Location::query()->findOrFail($payload['location_id']);
+            $staff = isset($payload['staff_id']) ? Staff::query()->findOrFail($payload['staff_id']) : null;
+            $created = app(CreateBooking::class)->execute(
+                $business,
+                $location,
+                $service,
+                $staff,
+                new DateTimeImmutable($payload['start']),
+                ['name' => 'Concurrency Test Customer', 'phone' => $payload['phone']],
+                null,
+                (bool) ($payload['hold'] ?? false),
+                'public',
+                'customer',
+                'concurrency-test',
+            );
 
-    echo json_encode(['status' => 'created', 'booking_id' => $result->booking->getKey()], JSON_THROW_ON_ERROR);
-} catch (DomainException $exception) {
-    if (! in_array($exception->getMessage(), [
-        'SLOT_UNAVAILABLE',
-        'CUSTOMER_BOOKING_OVERLAP',
-        'CUSTOMER_SERVICE_DAILY_LIMIT',
-    ], true)) {
-        fwrite(STDERR, $exception->getMessage());
-        exit(1);
-    }
+            return ['status' => 'created', 'booking_id' => $created->booking->getKey()];
+        })(),
+        'transition' => (static function () use ($payload) {
+            $booking = Booking::query()->findOrFail($payload['booking_id']);
+            $updated = app(TransitionBooking::class)->execute(
+                $booking,
+                BookingStatus::from($payload['target_status']),
+                'Concurrency test',
+            );
 
-    $status = match ($exception->getMessage()) {
-        'CUSTOMER_BOOKING_OVERLAP' => 'customer_booking_overlap',
-        'CUSTOMER_SERVICE_DAILY_LIMIT' => 'customer_service_daily_limit',
-        default => 'slot_unavailable',
+            return ['status' => 'transitioned', 'booking_status' => $updated->status->value];
+        })(),
+        'reschedule' => (static function () use ($payload, $business, $service) {
+            $booking = Booking::query()->findOrFail($payload['booking_id']);
+            $location = Location::query()->findOrFail($payload['location_id']);
+            $staff = isset($payload['staff_id']) ? Staff::query()->findOrFail($payload['staff_id']) : null;
+            $updated = app(RescheduleBooking::class)->execute(
+                $business,
+                $booking,
+                $location,
+                $staff,
+                new DateTimeImmutable($payload['start']),
+                'system',
+                null,
+                'Concurrency test',
+            );
+
+            return ['status' => 'rescheduled', 'booking_id' => $updated->getKey()];
+        })(),
+        'settings' => (static function () use ($payload, $business, $service) {
+            $location = Location::query()->findOrFail($payload['location_id']);
+            $updated = app(UpdateServiceLocationSettings::class)->execute(
+                $business,
+                $service,
+                $location,
+                BookingMode::from($payload['booking_mode']),
+                (int) $payload['capacity'],
+            );
+
+            return [
+                'status' => 'settings_updated',
+                'booking_mode' => $updated->booking_mode->value,
+                'capacity' => $updated->capacity,
+            ];
+        })(),
+        default => throw new RuntimeException('Unknown concurrency operation.'),
     };
 
-    echo json_encode(['status' => $status], JSON_THROW_ON_ERROR);
+    echo json_encode($result, JSON_THROW_ON_ERROR);
+} catch (DomainException $exception) {
+    echo json_encode(['status' => 'rejected', 'reason' => $exception->getMessage()], JSON_THROW_ON_ERROR);
 }

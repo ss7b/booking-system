@@ -19,6 +19,142 @@ use Tests\TestCase;
 
 class BookingDoubleBookingConcurrencyTest extends TestCase
 {
+    public function test_concurrent_staffless_requests_do_not_exceed_location_capacity(): void
+    {
+        $this->assertSame('mysql', DB::connection()->getDriverName());
+        $this->assertSame('booking_test', DB::connection()->getDatabaseName(), 'Concurrency tests must only use the isolated booking_test database.');
+
+        $business = Business::query()->create([
+            'name' => 'Staffless Concurrency Business',
+            'slug' => 'staffless-race-'.Str::lower(Str::random(12)),
+            'timezone' => 'Asia/Riyadh',
+            'default_currency' => 'SAR',
+            'is_active' => true,
+        ]);
+        $calendar = AvailabilityCalendar::query()->create([
+            'business_id' => $business->getKey(),
+            'name' => 'Staffless Concurrency Calendar',
+            'timezone' => 'Asia/Riyadh',
+        ]);
+        $date = CarbonImmutable::now('Asia/Riyadh')->addDays(7)->toDateString();
+        $calendar->rules()->create([
+            'day_of_week' => CarbonImmutable::parse($date, 'Asia/Riyadh')->dayOfWeek,
+            'start_time' => '08:00:00',
+            'end_time' => '12:00:00',
+        ]);
+        $location = Location::query()->create([
+            'business_id' => $business->getKey(),
+            'calendar_id' => $calendar->getKey(),
+            'name' => 'Staffless Concurrency Location',
+            'slug' => 'staffless-race-'.Str::lower(Str::random(12)),
+            'timezone' => 'Asia/Riyadh',
+            'is_active' => true,
+        ]);
+        $service = Service::query()->create([
+            'business_id' => $business->getKey(),
+            'name' => 'Staffless Capacity One',
+            'slug' => 'staffless-race-'.Str::lower(Str::random(12)),
+            'duration_minutes' => 30,
+            'buffer_before_minutes' => 0,
+            'buffer_after_minutes' => 0,
+            'slot_interval_minutes' => 30,
+            'min_notice_minutes' => 0,
+            'max_advance_days' => 30,
+            'price_minor' => 1000,
+            'currency' => 'SAR',
+            'is_active' => true,
+        ]);
+        $location->services()->sync([
+            $service->getKey() => ['booking_mode' => 'staffless', 'capacity' => 1],
+        ]);
+
+        $businessId = (string) $business->getKey();
+        $locationId = (string) $location->getKey();
+        $serviceId = (string) $service->getKey();
+        $barrierPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'staffless-race-'.Str::random(20);
+        $readyPaths = [$barrierPath.'-first-ready', $barrierPath.'-second-ready'];
+        $startedPaths = [$barrierPath.'-first-started', $barrierPath.'-second-started'];
+        $workers = [];
+
+        try {
+            DB::beginTransaction();
+            Business::query()->whereKey($business->getKey())->lockForUpdate()->firstOrFail();
+            app(BookingLockManager::class)->lockForServiceLocation($business, $serviceId, $locationId);
+
+            foreach ([0, 1] as $index) {
+                $worker = new Process([PHP_BINARY, base_path('tests/Support/booking-concurrency-worker.php')], base_path());
+                $worker->setInput(json_encode([
+                    'business_id' => $businessId,
+                    'location_id' => $locationId,
+                    'service_id' => $serviceId,
+                    'start' => $date.'T09:00:00+03:00',
+                    'phone' => '966500000'.random_int(1000, 9999),
+                    'barrier' => $barrierPath,
+                    'ready' => $readyPaths[$index],
+                    'started' => $startedPaths[$index],
+                ], JSON_THROW_ON_ERROR));
+                $worker->start();
+                $workers[] = $worker;
+            }
+
+            $this->waitForFiles($readyPaths, $workers);
+            file_put_contents($barrierPath, 'go');
+            $this->waitForFiles($startedPaths, $workers);
+
+            $deadline = microtime(true) + 15;
+            $waitingQueries = 0;
+            while (microtime(true) < $deadline) {
+                $waitingQueries = (int) DB::selectOne(
+                    "SELECT COUNT(*) AS aggregate FROM information_schema.PROCESSLIST WHERE DB = DATABASE() AND INFO LIKE 'select * from `service_locations`%'",
+                )->aggregate;
+                if ($waitingQueries >= 2) {
+                    break;
+                }
+
+                foreach ($workers as $worker) {
+                    if (! $worker->isRunning()) {
+                        throw new \RuntimeException($worker->getErrorOutput() ?: $worker->getOutput());
+                    }
+                }
+
+                usleep(10000);
+            }
+            $this->assertSame(2, $waitingQueries, 'Both workers must reach the service-location locking read before release.');
+            DB::commit();
+
+            foreach ($workers as $worker) {
+                $worker->wait();
+                $this->assertSame(0, $worker->getExitCode(), $worker->getErrorOutput());
+            }
+
+            $results = array_map(
+                static fn (Process $worker): array => json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR),
+                $workers,
+            );
+            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'created')));
+            $this->assertSame(1, $this->countRejection($results, 'SLOT_UNAVAILABLE'));
+            $this->assertSame(1, DB::table('bookings')->where('business_id', $businessId)->whereNull('staff_id')->count());
+        } finally {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+
+            foreach ($workers as $worker) {
+                if ($worker->isRunning()) {
+                    $worker->stop(1);
+                }
+            }
+
+            $this->deleteBusinessFixture($businessId);
+
+            foreach (array_merge([$barrierPath], $readyPaths, $startedPaths) as $path) {
+                if (is_file($path)) {
+                    unlink($path);
+                }
+            }
+        }
+    }
+
     public function test_concurrent_bookings_with_overlapping_buffers_allow_only_one_booking(): void
     {
         $this->assertSame('mysql', DB::connection()->getDriverName());
@@ -149,7 +285,7 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
             $results = array_map(static fn (Process $worker): array => json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR), $workers);
             $statuses = array_column($results, 'status');
             $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'created')), json_encode($statuses));
-            $this->assertSame(1, count(array_filter($results, static fn (array $result): bool => $result['status'] === 'slot_unavailable')), json_encode($statuses));
+            $this->assertSame(1, $this->countRejection($results, 'SLOT_UNAVAILABLE'), json_encode($results));
             $this->assertSame(1, DB::table('bookings')->where('business_id', $businessId)->where('staff_id', $staffId)->count(), json_encode($statuses));
         } finally {
             if (DB::transactionLevel() > 0) {
@@ -265,15 +401,16 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
             $this->waitForLockWaiters(2, $workers);
             DB::commit();
 
-            $statuses = [];
+            $results = [];
             foreach ($workers as $worker) {
                 $worker->wait();
                 $this->assertSame(0, $worker->getExitCode(), $worker->getErrorOutput());
-                $statuses[] = json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR)['status'];
+                $results[] = json_decode($worker->getOutput(), true, flags: JSON_THROW_ON_ERROR);
             }
 
+            $statuses = array_column($results, 'status');
             $this->assertSame(1, count(array_filter($statuses, static fn (string $status): bool => $status === 'created')), json_encode($statuses));
-            $this->assertSame(1, count(array_filter($statuses, static fn (string $status): bool => $status === 'customer_service_daily_limit')), json_encode($statuses));
+            $this->assertSame(1, $this->countRejection($results, 'CUSTOMER_SERVICE_DAILY_LIMIT'), json_encode($results));
             $this->assertSame(1, DB::table('customers')->where('business_id', $businessId)->count());
             $customerIds = DB::table('bookings')->where('business_id', $businessId)->pluck('customer_id')->unique();
             $this->assertCount(1, $customerIds);
@@ -318,6 +455,14 @@ class BookingDoubleBookingConcurrencyTest extends TestCase
         }
 
         throw new \RuntimeException('Concurrent booking workers did not reach the synchronization barrier.');
+    }
+
+    private function countRejection(array $results, string $reason): int
+    {
+        return count(array_filter(
+            $results,
+            static fn (array $result): bool => $result['status'] === 'rejected' && $result['reason'] === $reason,
+        ));
     }
 
     private function waitForLockWaiters(int $expected, array $workers): void

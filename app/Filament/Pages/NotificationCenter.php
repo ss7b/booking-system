@@ -62,6 +62,16 @@ class NotificationCenter extends Page
         return 'Notifications';
     }
 
+    public function refreshInbox(): void
+    {
+        $this->unreadCount = app(NotificationManager::class)
+            ->query(Filament::auth()->user(), $this->business())
+            ->whereNull('read_at')
+            ->count();
+
+        $this->dispatch('admin-notifications-updated', count: $this->unreadCount);
+    }
+
     #[On('admin-notifications-updated')]
     public function syncUnreadCount(int $count): void
     {

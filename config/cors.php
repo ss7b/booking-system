@@ -4,6 +4,7 @@ return [
     'paths' => [
         'api/v1/services',
         'api/v1/locations',
+        'api/v1/staff',
         'api/v1/staff/*',
         'api/v1/availability',
         'api/v1/availability/calendar',

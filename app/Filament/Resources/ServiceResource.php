@@ -3,12 +3,20 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\ServiceResource\Pages\ManageServices;
+use App\Domain\Booking\Services\UpdateServiceLocationSettings;
+use App\Enums\BookingMode;
+use App\Models\Business;
+use App\Models\Location;
 use App\Models\Service;
+use App\Models\ServiceLocation;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
+use Filament\Forms\Get;
+use Filament\Notifications\Notification;
 use Filament\Tables;
 use Filament\Tables\Table;
+use DomainException;
 
 class ServiceResource extends TenantResource
 {
@@ -50,6 +58,85 @@ class ServiceResource extends TenantResource
             ])
             ->filters([Tables\Filters\TernaryFilter::make('is_active')])
             ->actions([
+                Tables\Actions\Action::make('configure_location_booking')
+                    ->label('Configure booking per location')
+                    ->icon('heroicon-o-adjustments-horizontal')
+                    ->form([
+                        Forms\Components\Select::make('location_id')
+                            ->label('Location')
+                            ->options(fn (Service $record) => $record->locations()
+                                ->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)
+                                    ->locations(Filament::auth()->user(), Filament::getTenant())
+                                    ->select('id'))
+                                ->orderBy('locations.name')
+                                ->pluck('locations.name', 'locations.id'))
+                            ->live()
+                            ->required()
+                            ->afterStateUpdated(function (?string $state, callable $set, Service $record): void {
+                                if (! $state) {
+                                    return;
+                                }
+
+                                $assignment = ServiceLocation::query()
+                                    ->where('service_id', $record->getKey())
+                                    ->where('location_id', $state)
+                                    ->first();
+                                $set('booking_mode', $assignment?->booking_mode?->value ?? BookingMode::StaffRequired->value);
+                                $set('capacity', $assignment?->capacity ?? 1);
+                            }),
+                        Forms\Components\Select::make('booking_mode')
+                            ->options([
+                                BookingMode::StaffRequired->value => 'Requires staff',
+                                BookingMode::Staffless->value => 'Staffless',
+                            ])
+                            ->live()
+                            ->required(),
+                        Forms\Components\TextInput::make('capacity')
+                            ->numeric()
+                            ->integer()
+                            ->minValue(1)
+                            ->required()
+                            ->dehydratedWhenHidden()
+                            ->visible(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value),
+                    ])
+                    ->action(function (Service $record, array $data): void {
+                        $business = Filament::getTenant();
+                        $user = Filament::auth()->user();
+                        abort_unless($business instanceof Business && $user, 500);
+
+                        $access = app(\App\Domain\Authorization\BusinessAccess::class);
+                        abort_unless($access->canManageService($user, $record), 403);
+
+                        $location = Location::query()
+                            ->where('business_id', $business->getKey())
+                            ->findOrFail($data['location_id']);
+                        abort_unless($access->canAccessLocation($user, $business, $location), 404);
+                        $mode = BookingMode::tryFrom((string) $data['booking_mode']);
+                        abort_unless($mode !== null, 422);
+
+                        try {
+                            app(UpdateServiceLocationSettings::class)->execute(
+                                $business,
+                                $record,
+                                $location,
+                                $mode,
+                                (int) ($data['capacity'] ?? 1),
+                            );
+
+                            Notification::make()->title('Location booking settings saved')->success()->send();
+                        } catch (DomainException $exception) {
+                            $message = match ($exception->getMessage()) {
+                                'BOOKING_MODE_CHANGE_BLOCKED' => 'Booking mode cannot change while active future bookings or holds exist.',
+                                'CAPACITY_BELOW_CURRENT_OCCUPANCY' => 'Capacity cannot be lower than current future peak occupancy.',
+                                'CAPACITY_MUST_BE_POSITIVE' => 'Capacity must be at least one.',
+                                default => $exception->getMessage(),
+                            };
+
+                            Notification::make()->title('Booking settings were not saved')->body($message)->danger()->send();
+                        }
+                    })
+                    ->visible(fn (Service $record): bool => app(\App\Domain\Authorization\BusinessAccess::class)
+                        ->canManageService(Filament::auth()->user(), $record)),
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()->visible(fn (Service $record): bool => ! $record->bookings()->exists()),
             ]);

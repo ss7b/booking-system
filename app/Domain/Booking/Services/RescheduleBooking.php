@@ -3,6 +3,7 @@
 namespace App\Domain\Booking\Services;
 
 use App\Domain\Availability\Services\AvailabilityService;
+use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\BookingStatusHistory;
@@ -30,22 +31,78 @@ final class RescheduleBooking
         Business $business,
         Booking $booking,
         Location $location,
-        Staff $staff,
+        ?Staff $staff,
         DateTimeImmutable $start,
         string $actorType,
         ?string $actorId = null,
         ?string $reason = null,
     ): Booking {
-        return DB::transaction(function () use ($business, $booking, $location, $staff, $start, $actorType, $actorId, $reason): Booking {
-            Business::query()
-                ->whereKey($business->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $initial = Booking::query()
+                ->where('business_id', $business->getKey())
+                ->findOrFail($booking->getKey());
+            $sourceMode = DB::table('service_locations')
+                ->where('service_id', $initial->service_id)
+                ->where('location_id', $initial->location_id)
+                ->value('booking_mode');
+            $targetMode = DB::table('service_locations')
+                ->where('service_id', $initial->service_id)
+                ->where('location_id', $location->getKey())
+                ->value('booking_mode');
+
+            if (! is_string($sourceMode) || ! is_string($targetMode)) {
+                throw new DomainException('BOOKING_RELATIONSHIP_INVALID');
+            }
+
+            $needsBusinessLock = $sourceMode === BookingMode::StaffRequired->value
+                || $targetMode === BookingMode::StaffRequired->value;
+
+            try {
+                return DB::transaction(function () use ($business, $booking, $location, $staff, $start, $actorType, $actorId, $reason, $initial, $sourceMode, $targetMode, $needsBusinessLock): Booking {
+                    if ($needsBusinessLock) {
+                        Business::query()
+                            ->whereKey($business->getKey())
+                            ->lockForUpdate()
+                            ->firstOrFail();
+                    }
+
+                    $snapshot = Booking::query()
+                        ->where('business_id', $business->getKey())
+                        ->findOrFail($booking->getKey());
+                    if (
+                        (string) $snapshot->service_id !== (string) $initial->service_id
+                        || (string) $snapshot->location_id !== (string) $initial->location_id
+                    ) {
+                        throw new DomainException('BOOKING_CHANGED_RETRY');
+                    }
+
+                    $lockedAssignments = $this->lockManager->lockForServiceLocations($business, [
+                        [(string) $snapshot->service_id, (string) $snapshot->location_id],
+                        [(string) $snapshot->service_id, (string) $location->getKey()],
+                    ]);
+                    $assignments = [];
+                    foreach ($lockedAssignments as $assignment) {
+                        $assignments[(string) $assignment->service_id.'|'.(string) $assignment->location_id] = $assignment;
+                    }
+
+                    if (
+                        $assignments[(string) $snapshot->service_id.'|'.(string) $snapshot->location_id]->booking_mode->value !== $sourceMode
+                        || $assignments[(string) $snapshot->service_id.'|'.(string) $location->getKey()]->booking_mode->value !== $targetMode
+                    ) {
+                        throw new DomainException('BOOKING_MODE_CHANGED_RETRY');
+                    }
 
             $booking = Booking::query()
                 ->where('business_id', $business->getKey())
                 ->lockForUpdate()
                 ->findOrFail($booking->getKey());
+
+            if (
+                (string) $booking->service_id !== (string) $snapshot->service_id
+                || (string) $booking->location_id !== (string) $snapshot->location_id
+            ) {
+                throw new DomainException('BOOKING_CHANGED_RETRY');
+            }
 
             $currentStatus = $booking->status;
 
@@ -64,19 +121,31 @@ final class RescheduleBooking
                 ->whereKey($booking->service_id)
                 ->firstOrFail();
 
-            $staff = Staff::query()
-                ->where('business_id', $business->getKey())
-                ->where('status', 'active')
-                ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
-                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
-                ->findOrFail($staff->getKey());
+            $assignment = $assignments[(string) $service->getKey().'|'.(string) $location->getKey()] ?? null;
+            if (! $assignment) {
+                throw new DomainException('BOOKING_RELATIONSHIP_INVALID');
+            }
+
+            $staffRequired = $assignment->booking_mode === BookingMode::StaffRequired;
+            if ($staffRequired !== ($staff !== null)) {
+                throw new DomainException($staffRequired ? 'STAFF_REQUIRED' : 'STAFF_NOT_ALLOWED');
+            }
+
+            if ($staff) {
+                $staff = Staff::query()
+                    ->where('business_id', $business->getKey())
+                    ->where('status', 'active')
+                    ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
+                    ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                    ->findOrFail($staff->getKey());
+            }
 
             $oldLocation = Location::query()
                 ->where('business_id', $business->getKey())
                 ->findOrFail($booking->location_id);
-            $oldStaff = Staff::query()
-                ->where('business_id', $business->getKey())
-                ->findOrFail($booking->staff_id);
+            $oldStaff = $booking->staff_id === null
+                ? null
+                : Staff::query()->where('business_id', $business->getKey())->findOrFail($booking->staff_id);
 
             $timezone = $location->timezone ?: $business->timezone;
             $localStart = $start->setTimezone(new DateTimeZone($timezone));
@@ -104,22 +173,28 @@ final class RescheduleBooking
                 throw new DomainException('CUSTOMER_SERVICE_DAILY_LIMIT');
             }
 
-            $this->lockManager->lockStaffRanges($business, [
-                [
+            $staffRanges = [];
+            if ($oldStaff) {
+                $staffRanges[] = [
                     'staff' => $oldStaff,
                     'start' => Carbon::instance($booking->occupied_starts_at),
                     'end' => Carbon::instance($booking->occupied_ends_at),
                     'timezone' => $oldLocation->timezone ?: $business->timezone,
-                ],
-                [
+                ];
+            }
+            if ($staff) {
+                $staffRanges[] = [
                     'staff' => $staff,
                     'start' => Carbon::instance($occupiedStart),
                     'end' => Carbon::instance($occupiedEnd),
                     'timezone' => $timezone,
-                ],
-            ]);
+                ];
+            }
+            if ($staffRanges !== []) {
+                $this->lockManager->lockStaffRanges($business, $staffRanges);
+            }
 
-            if ($this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd, (string) $booking->getKey())) {
+            if ($staff && $this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd, (string) $booking->getKey())) {
                 throw new DomainException('SLOT_UNAVAILABLE');
             }
 
@@ -130,6 +205,7 @@ final class RescheduleBooking
                 $localStart->format('Y-m-d'),
                 $staff,
                 (string) $booking->getKey(),
+                $assignment,
             );
             $requestedTimestamp = $start->format('U.u');
             $slotIsAvailable = collect($availability['slots'])->contains(
@@ -145,7 +221,7 @@ final class RescheduleBooking
             $oldLocationId = $booking->location_id;
 
             $booking->location_id = $location->getKey();
-            $booking->staff_id = $staff->getKey();
+            $booking->staff_id = $staff?->getKey();
             $booking->starts_at = $start->setTimezone(new DateTimeZone('UTC'));
             $booking->ends_at = $end->setTimezone(new DateTimeZone('UTC'));
             $booking->occupied_starts_at = $occupiedStart->setTimezone(new DateTimeZone('UTC'));
@@ -188,15 +264,23 @@ final class RescheduleBooking
                     'new_starts_at' => $booking->starts_at->format(DATE_ATOM),
                     'old_staff_id' => $oldStaffId,
                     'new_staff_id' => $booking->staff_id,
-                    'old_staff_user_id' => $oldStaff->user_id,
-                    'new_staff_user_id' => $staff->user_id,
+                    'old_staff_user_id' => $oldStaff?->user_id,
+                    'new_staff_user_id' => $staff?->user_id,
                     'old_location_id' => $oldLocationId,
                     'new_location_id' => $booking->location_id,
                 ],
                 'occurred_at' => now(),
             ]);
 
-            return $booking->refresh();
-        }, attempts: 3);
+                    return $booking->refresh();
+                }, attempts: 3);
+            } catch (DomainException $exception) {
+                if (! in_array($exception->getMessage(), ['BOOKING_MODE_CHANGED_RETRY', 'BOOKING_CHANGED_RETRY'], true) || $attempt === 2) {
+                    throw $exception;
+                }
+            }
+        }
+
+        throw new DomainException('BOOKING_CHANGED_RETRY');
     }
 }

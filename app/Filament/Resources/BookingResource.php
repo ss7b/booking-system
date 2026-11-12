@@ -6,6 +6,7 @@ use App\Domain\Booking\Services\CreateBooking;
 use App\Domain\Booking\Services\RescheduleBooking;
 use App\Domain\Booking\Services\TransitionBooking;
 use App\Domain\Authorization\BusinessAccess;
+use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
 use App\Filament\Resources\BookingResource\Pages\ListBookings;
 use App\Models\Booking;
@@ -26,6 +27,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
@@ -59,7 +61,7 @@ class BookingResource extends Resource
                 TextColumn::make('reference')->searchable()->sortable(),
                 TextColumn::make('customer.name')->label('Customer')->searchable(),
                 TextColumn::make('service_name_snapshot')->label('Service')->searchable(),
-                TextColumn::make('staff.name')->label('Staff')->sortable(),
+                TextColumn::make('staff.name')->label('Staff')->formatStateUsing(fn (?string $state): string => $state ?? '—')->sortable(),
                 TextColumn::make('location.name')->label('Location'),
                 TextColumn::make('starts_at')
                     ->label('Starts')
@@ -89,14 +91,16 @@ class BookingResource extends Resource
                     ->form([
                         Select::make('location_id')
                             ->options(fn () => app(BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
-                            ->live()->required(),
+                            ->live()->required()
+                            ->afterStateUpdated(fn (callable $set) => [$set('service_id', null), $set('staff_id', null)]),
                         Select::make('service_id')
                             ->options(fn (Get $get) => Service::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
                                 ->where('is_active', true)
                                 ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('locations.is_active', true)))
                                 ->orderBy('name')->pluck('name', 'id'))
-                            ->live()->required(),
+                            ->live()->required()
+                            ->afterStateUpdated(fn (callable $set) => $set('staff_id', null)),
                         Select::make('staff_id')
                             ->options(fn (Get $get) => Staff::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
@@ -104,7 +108,8 @@ class BookingResource extends Resource
                                 ->when($get('service_id'), fn ($query, $serviceId) => $query->whereHas('services', fn ($services) => $services->whereKey($serviceId)))
                                 ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('staff_locations.is_active', true)))
                                 ->orderBy('name')->pluck('name', 'id'))
-                            ->required(),
+                            ->visible(fn (Get $get): bool => self::staffRequired($get('service_id'), $get('location_id')))
+                            ->required(fn (Get $get): bool => self::staffRequired($get('service_id'), $get('location_id'))),
                         DateTimePicker::make('starts_at')
                             ->timezone(fn (Get $get): string => Location::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
@@ -131,12 +136,14 @@ class BookingResource extends Resource
                             ->where('is_active', true)
                             ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('locations.is_active', true))
                             ->findOrFail($data['service_id']);
-                        $staff = Staff::query()
-                            ->where('business_id', $business->getKey())
-                            ->where('status', 'active')
-                            ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
-                            ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
-                            ->findOrFail($data['staff_id']);
+                        $staff = empty($data['staff_id'])
+                            ? null
+                            : Staff::query()
+                                ->where('business_id', $business->getKey())
+                                ->where('status', 'active')
+                                ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
+                                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                                ->findOrFail($data['staff_id']);
 
                         try {
                             $result = app(CreateBooking::class)->execute(
@@ -226,7 +233,8 @@ class BookingResource extends Resource
                                 ->whereHas('services', fn ($query) => $query->whereKey($record->service_id))
                                 ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('staff_locations.is_active', true)))
                                 ->orderBy('name')->pluck('name', 'id'))
-                            ->required(),
+                            ->visible(fn (Get $get, Booking $record): bool => self::staffRequired($record->service_id, $get('location_id')))
+                            ->required(fn (Get $get, Booking $record): bool => self::staffRequired($record->service_id, $get('location_id'))),
                         DateTimePicker::make('starts_at')
                             ->timezone(fn (Get $get): string => Location::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
@@ -241,7 +249,14 @@ class BookingResource extends Resource
                         self::authorizeBookingAction($record);
                         $location = Location::query()->where('business_id', $business->getKey())->where('is_active', true)->findOrFail($data['location_id']);
                         abort_unless(app(BusinessAccess::class)->canAccessLocation(Filament::auth()->user(), $business, $location), 404);
-                        $staff = Staff::query()->where('business_id', $business->getKey())->where('status', 'active')->findOrFail($data['staff_id']);
+                        $staff = empty($data['staff_id'])
+                            ? null
+                            : Staff::query()
+                                ->where('business_id', $business->getKey())
+                                ->where('status', 'active')
+                                ->whereHas('services', fn ($query) => $query->whereKey($record->service_id))
+                                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                                ->findOrFail($data['staff_id']);
 
                         try {
                             $updated = app(RescheduleBooking::class)->execute(
@@ -301,5 +316,17 @@ class BookingResource extends Resource
     private static function authorizeBookingAction(Booking $record): void
     {
         abort_unless(app(BusinessAccess::class)->canManageBooking(Filament::auth()->user(), $record), 403);
+    }
+
+    private static function staffRequired(?string $serviceId, ?string $locationId): bool
+    {
+        if (! $serviceId || ! $locationId) {
+            return false;
+        }
+
+        return DB::table('service_locations')
+            ->where('service_id', $serviceId)
+            ->where('location_id', $locationId)
+            ->value('booking_mode') === BookingMode::StaffRequired->value;
     }
 }

@@ -1208,7 +1208,7 @@ class BookingNotificationProcessingTest extends TestCase
             ->assertOk()
             ->assertSee($booking->reference)
             ->assertSee('wire:poll.10s="refreshInbox"', false)
-            ->assertSee('notification-count-updated', false);
+            ->assertSee('admin-notifications-updated', false);
 
         Sanctum::actingAs($owner);
         $this->withHeaders($headers)->getJson('/api/v1/admin/notifications')
@@ -1249,7 +1249,7 @@ class BookingNotificationProcessingTest extends TestCase
 
         $component->call('refreshInbox')
             ->assertSet('unreadCount', 1)
-            ->assertDispatched('notification-count-updated')
+            ->assertDispatched('admin-notifications-updated')
             ->assertSee('Rescheduled')
             ->assertSee($booking->reference);
 

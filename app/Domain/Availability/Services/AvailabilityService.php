@@ -4,19 +4,23 @@ namespace App\Domain\Availability\Services;
 
 use App\Domain\Availability\ValueObjects\TimeRange;
 use App\Domain\Scheduling\Services\ScheduleResolver;
+use App\Enums\BookingMode;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
+use App\Models\ServiceLocation;
 use App\Models\Staff;
 use DateTimeImmutable;
 use DateTimeZone;
+use Illuminate\Support\Facades\DB;
 
 final class AvailabilityService
 {
     public function __construct(
         private readonly ScheduleResolver $scheduleResolver,
         private readonly SlotGenerator $slotGenerator,
+        private readonly CapacityEvaluator $capacityEvaluator,
     ) {}
 
     /** @return array{date:string,timezone:string,service:array<string,int>,staff:?array<string,string>,slots:array} */
@@ -27,6 +31,7 @@ final class AvailabilityService
         string $date,
         ?Staff $requestedStaff = null,
         ?string $ignoreBookingId = null,
+        ?ServiceLocation $assignment = null,
     ): array
     {
         $timezone = $location->timezone ?: $business->timezone;
@@ -35,6 +40,33 @@ final class AvailabilityService
 
         if (! $localStart || $localStart->format('Y-m-d') !== $date) {
             throw new \InvalidArgumentException('Date must be a valid YYYY-MM-DD value.');
+        }
+
+        $assignment ??= ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->first();
+
+        if (! $assignment) {
+            throw new \DomainException('BOOKING_RELATIONSHIP_INVALID');
+        }
+
+        if ($assignment->booking_mode === BookingMode::Staffless) {
+            if ($requestedStaff !== null) {
+                throw new \InvalidArgumentException('Staff cannot be selected for a staffless service.');
+            }
+
+            return $this->stafflessForDate(
+                $business,
+                $location,
+                $service,
+                $assignment,
+                $date,
+                $timezone,
+                $zone,
+                $localStart,
+                $ignoreBookingId,
+            );
         }
 
         $localEnd = $localStart->modify('+1 day');
@@ -145,6 +177,7 @@ final class AvailabilityService
                 'id' => $service->getKey(),
                 'duration_minutes' => (int) $service->duration_minutes,
                 'slot_interval_minutes' => (int) $service->slot_interval_minutes,
+                'booking_mode' => $assignment->booking_mode->value,
             ],
             'staff' => $requestedStaff ? ['id' => $requestedStaff->getKey(), 'name' => $requestedStaff->name] : null,
             'slots' => array_map(static function (array $slot) use ($requestedStaff): array {
@@ -161,6 +194,130 @@ final class AvailabilityService
 
                 return $slot;
             }, $slotOptions),
+        ];
+    }
+
+    private function stafflessForDate(
+        Business $business,
+        Location $location,
+        Service $service,
+        ServiceLocation $assignment,
+        string $date,
+        string $timezone,
+        DateTimeZone $zone,
+        DateTimeImmutable $localStart,
+        ?string $ignoreBookingId,
+    ): array {
+        $location->loadMissing('calendar.rules', 'calendar.overrides');
+        $calendar = $location->calendar;
+        if (! $calendar) {
+            return $this->emptyStafflessAvailability($date, $timezone, $service, $assignment);
+        }
+
+        $calendar->loadMissing('rules', 'overrides');
+        $windows = $this->scheduleResolver->resolve(
+            $date,
+            $calendar->timezone ?: $timezone,
+            $calendar->rules->map(fn ($rule) => [
+                'day_of_week' => (int) $rule->day_of_week,
+                'start_time' => (string) $rule->start_time,
+                'end_time' => (string) $rule->end_time,
+            ])->all(),
+            $calendar->overrides->map(fn ($override) => [
+                'date' => $override->date->format('Y-m-d'),
+                'mode' => $override->mode,
+                'start_time' => $override->start_time,
+                'end_time' => $override->end_time,
+            ])->all(),
+        );
+
+        if ($windows === []) {
+            return $this->emptyStafflessAvailability($date, $timezone, $service, $assignment);
+        }
+
+        $utc = new DateTimeZone('UTC');
+        $windowStart = $windows[0]->start->modify('-'.(int) $service->buffer_before_minutes.' minutes')->setTimezone($utc);
+        $lastWindow = $windows[array_key_last($windows)];
+        $windowEnd = $lastWindow->end
+            ->modify('+'.((int) $service->duration_minutes + (int) $service->buffer_after_minutes).' minutes')
+            ->setTimezone($utc);
+        $busy = $this->capacityEvaluator->activeBookingRanges(
+            $business,
+            $location,
+            $service,
+            $windowStart,
+            $windowEnd,
+            $ignoreBookingId,
+            DB::transactionLevel() > 0,
+        );
+
+        $minimumStart = (new DateTimeImmutable('now', $zone))->modify('+'.$service->min_notice_minutes.' minutes');
+        $maximumStart = $service->max_advance_days === null
+            ? null
+            : (new DateTimeImmutable('now', $zone))->modify('+'.$service->max_advance_days.' days');
+        $slots = [];
+        $slotOptions = [];
+
+        foreach ($this->slotGenerator->generateOptions(
+            $windows,
+            [],
+            (int) $service->duration_minutes,
+            (int) $service->slot_interval_minutes,
+            (int) $service->buffer_before_minutes,
+            (int) $service->buffer_after_minutes,
+            $minimumStart,
+            $maximumStart,
+        ) as $option) {
+            $occupied = new TimeRange(
+                $option['range']->start->modify('-'.(int) $service->buffer_before_minutes.' minutes'),
+                $option['range']->end->modify('+'.(int) $service->buffer_after_minutes.' minutes'),
+            );
+            $available = $this->capacityEvaluator->allows((int) $assignment->capacity, $occupied, $busy);
+            $slot = [
+                'staff_id' => null,
+                'start' => $option['range']->start->format(DATE_ATOM),
+                'end' => $option['range']->end->format(DATE_ATOM),
+            ];
+            $slotOptions[] = $slot + ['available' => $available];
+
+            if ($available) {
+                $slots[] = $slot;
+            }
+        }
+
+        return [
+            'date' => $date,
+            'timezone' => $timezone,
+            'service' => [
+                'id' => $service->getKey(),
+                'duration_minutes' => (int) $service->duration_minutes,
+                'slot_interval_minutes' => (int) $service->slot_interval_minutes,
+                'booking_mode' => $assignment->booking_mode->value,
+            ],
+            'staff' => null,
+            'slots' => $slots,
+            'slot_options' => $slotOptions,
+        ];
+    }
+
+    private function emptyStafflessAvailability(
+        string $date,
+        string $timezone,
+        Service $service,
+        ServiceLocation $assignment,
+    ): array {
+        return [
+            'date' => $date,
+            'timezone' => $timezone,
+            'service' => [
+                'id' => $service->getKey(),
+                'duration_minutes' => (int) $service->duration_minutes,
+                'slot_interval_minutes' => (int) $service->slot_interval_minutes,
+                'booking_mode' => $assignment->booking_mode->value,
+            ],
+            'staff' => null,
+            'slots' => [],
+            'slot_options' => [],
         ];
     }
 }

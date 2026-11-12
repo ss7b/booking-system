@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Enums\BookingStatus;
+use App\Enums\BookingMode;
 use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Booking\Services\IdempotentMutation;
 use App\Domain\Booking\Services\RescheduleBooking;
@@ -12,6 +13,7 @@ use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Staff;
+use App\Models\ServiceLocation;
 use DateTimeImmutable;
 use DomainException;
 use Carbon\CarbonImmutable;
@@ -24,7 +26,7 @@ class BookingController extends Controller
     public function reschedule(Request $request, string $booking, IdempotentMutation $idempotency, RescheduleBooking $reschedule, BusinessAccess $access): JsonResponse
     {
         $data = $request->validate([
-            'staff_id' => ['required', 'ulid'],
+            'staff_id' => ['sometimes', 'nullable', 'ulid'],
             'location_id' => ['required', 'ulid'],
             'start' => ['required', 'date_format:Y-m-d\\TH:i:sP'],
             'reason' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -37,10 +39,35 @@ class BookingController extends Controller
             ->where('is_active', true)
             ->findOrFail($data['location_id']);
         abort_unless($access->canAccessLocation($request->user(), $business, $location), 404);
-        $staff = Staff::query()
+        $service = \App\Models\Service::query()
             ->where('business_id', $business->getKey())
-            ->where('status', 'active')
-            ->findOrFail($data['staff_id']);
+            ->whereKey($record->service_id)
+            ->firstOrFail();
+        $assignment = ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->firstOrFail();
+
+        if ($assignment->booking_mode === BookingMode::StaffRequired && empty($data['staff_id'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member is required for this service at this location.'],
+            ]);
+        }
+
+        if ($assignment->booking_mode === BookingMode::Staffless && ! empty($data['staff_id'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member cannot be assigned to this service at this location.'],
+            ]);
+        }
+
+        $staff = empty($data['staff_id'])
+            ? null
+            : Staff::query()
+                ->where('business_id', $business->getKey())
+                ->where('status', 'active')
+                ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
+                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                ->findOrFail($data['staff_id']);
         $key = $request->header('Idempotency-Key');
 
         if (! is_string($key) || $key === '' || strlen($key) > 255) {
@@ -228,7 +255,7 @@ class BookingController extends Controller
             'starts_at' => $booking->starts_at->format(DATE_ATOM),
             'ends_at' => $booking->ends_at->format(DATE_ATOM),
             'service' => ['id' => $booking->service_id, 'name' => $booking->service_name_snapshot],
-            'staff' => ['id' => $booking->staff_id, 'name' => $booking->staff->name],
+            'staff' => $booking->staff ? ['id' => $booking->staff_id, 'name' => $booking->staff->name] : null,
             'location' => ['id' => $booking->location_id, 'name' => $booking->location->name],
             'customer' => ['id' => $booking->customer_id, 'name' => $booking->customer->name, 'phone' => $booking->customer->phone],
         ];

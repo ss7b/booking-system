@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1\Public;
 
 use App\Domain\Availability\Services\AvailabilityService;
 use App\Http\Controllers\Controller;
+use App\Enums\BookingMode;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
+use App\Models\ServiceLocation;
 use App\Models\Staff;
 use DateInterval;
 use DateTimeImmutable;
@@ -24,7 +26,7 @@ class AvailabilityController extends Controller
         $filters = $request->validate([
             'service_id' => ['required', 'ulid'],
             'location_id' => ['required', 'ulid'],
-            'staff_id' => ['sometimes', 'ulid'],
+            'staff_id' => ['sometimes', 'nullable', 'ulid'],
             'date' => ['required', 'date_format:Y-m-d'],
         ]);
 
@@ -40,8 +42,18 @@ class AvailabilityController extends Controller
             ->findOrFail($filters['service_id']);
 
         $staff = null;
+        $assignment = ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->firstOrFail();
 
-        if (isset($filters['staff_id'])) {
+        if ($assignment->booking_mode === BookingMode::Staffless && ! empty($filters['staff_id'])) {
+            throw ValidationException::withMessages([
+                'staff_id' => ['A staff member cannot be selected for this service at this location.'],
+            ]);
+        }
+
+        if (! empty($filters['staff_id'])) {
             $staff = Staff::query()
                 ->where('business_id', $business->getKey())
                 ->where('status', 'active')
@@ -51,7 +63,7 @@ class AvailabilityController extends Controller
         }
 
         return response()->json([
-            'data' => $availability->forDate($business, $location, $service, $filters['date'], $staff),
+            'data' => $availability->forDate($business, $location, $service, $filters['date'], $staff, assignment: $assignment),
         ]);
     }
 
@@ -63,7 +75,7 @@ class AvailabilityController extends Controller
         $filters = $request->validate([
             'service_id' => ['required', 'ulid'],
             'location_id' => ['required', 'ulid'],
-            'staff_id' => ['sometimes', 'ulid'],
+            'staff_id' => ['sometimes', 'nullable', 'ulid'],
             'from' => ['required', 'date_format:Y-m-d'],
             'until' => ['required', 'date_format:Y-m-d'],
         ]);
@@ -88,9 +100,20 @@ class AvailabilityController extends Controller
             ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('locations.is_active', true))
             ->findOrFail($filters['service_id']);
 
+        $assignment = ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->firstOrFail();
+
         $staff = null;
 
-        if (isset($filters['staff_id'])) {
+        if ($assignment->booking_mode === BookingMode::Staffless && ! empty($filters['staff_id'])) {
+            throw ValidationException::withMessages([
+                'staff_id' => ['A staff member cannot be selected for this service at this location.'],
+            ]);
+        }
+
+        if (! empty($filters['staff_id'])) {
             $staff = Staff::query()
                 ->where('business_id', $business->getKey())
                 ->where('status', 'active')
@@ -103,7 +126,7 @@ class AvailabilityController extends Controller
 
         for ($date = $from; $date <= $until; $date = $date->add(new DateInterval('P1D'))) {
             $dateString = $date->format('Y-m-d');
-            $result = $availability->forDate($business, $location, $service, $dateString, $staff);
+            $result = $availability->forDate($business, $location, $service, $dateString, $staff, assignment: $assignment);
 
             $dates[] = ['date' => $dateString, 'available' => $result['slots'] !== []];
         }

@@ -8,11 +8,13 @@ use App\Domain\Booking\Services\IdempotentMutation;
 use App\Domain\Booking\Services\RescheduleBooking;
 use App\Domain\Booking\Services\TransitionBooking;
 use App\Enums\BookingStatus;
+use App\Enums\BookingMode;
 use App\Http\Controllers\Controller;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
+use App\Models\ServiceLocation;
 use App\Models\Staff;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -52,7 +54,7 @@ class BookingController extends Controller
 
         $data = $request->validate([
             'service_id' => ['required', 'ulid'],
-            'staff_id' => ['required', 'ulid'],
+            'staff_id' => ['sometimes', 'nullable', 'ulid'],
             'location_id' => ['required', 'ulid'],
             'start' => ['required', 'date_format:Y-m-d\TH:i:sP'],
             'customer.name' => ['required', 'string', 'max:200'],
@@ -72,12 +74,31 @@ class BookingController extends Controller
             ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('locations.is_active', true))
             ->findOrFail($data['service_id']);
 
-        $staff = Staff::query()
-            ->where('business_id', $business->getKey())
-            ->where('status', 'active')
-            ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
-            ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
-            ->findOrFail($data['staff_id']);
+        $assignment = ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->firstOrFail();
+
+        if ($assignment->booking_mode === BookingMode::StaffRequired && empty($data['staff_id'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member is required for this service at this location.'],
+            ]);
+        }
+
+        if ($assignment->booking_mode === BookingMode::Staffless && ! empty($data['staff_id'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member cannot be assigned to this service at this location.'],
+            ]);
+        }
+
+        $staff = $assignment->booking_mode === BookingMode::Staffless
+            ? null
+            : Staff::query()
+                ->where('business_id', $business->getKey())
+                ->where('status', 'active')
+                ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
+                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                ->findOrFail($data['staff_id']);
 
         try {
             return $idempotency->execute(
@@ -184,7 +205,7 @@ class BookingController extends Controller
         }
 
         $rules = [
-            'staff_id' => $viaManagementLink ? ['prohibited'] : ['required', 'ulid'],
+            'staff_id' => $viaManagementLink ? ['prohibited'] : ['sometimes', 'nullable', 'ulid'],
             'location_id' => $viaManagementLink ? ['prohibited'] : ['required', 'ulid'],
             'start' => ['required', 'date_format:Y-m-d\\TH:i:sP'],
             'reason' => ['sometimes', 'nullable', 'string', 'max:255'],
@@ -199,10 +220,36 @@ class BookingController extends Controller
             ->where('business_id', $business->getKey())
             ->where('is_active', true)
             ->findOrFail($viaManagementLink ? $booking->location_id : $data['location_id']);
-        $staff = Staff::query()
+        $service = Service::query()
             ->where('business_id', $business->getKey())
-            ->where('status', 'active')
-            ->findOrFail($viaManagementLink ? $booking->staff_id : $data['staff_id']);
+            ->whereKey($booking->service_id)
+            ->firstOrFail();
+        $assignment = ServiceLocation::query()
+            ->where('service_id', $service->getKey())
+            ->where('location_id', $location->getKey())
+            ->firstOrFail();
+        $requestedStaffId = $viaManagementLink ? $booking->staff_id : ($data['staff_id'] ?? null);
+
+        if ($assignment->booking_mode === BookingMode::StaffRequired && ! $requestedStaffId) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member is required for this service at this location.'],
+            ]);
+        }
+
+        if ($assignment->booking_mode === BookingMode::Staffless && $requestedStaffId !== null) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'staff_id' => ['A staff member cannot be assigned to this service at this location.'],
+            ]);
+        }
+
+        $staff = $requestedStaffId === null
+            ? null
+            : Staff::query()
+                ->where('business_id', $business->getKey())
+                ->where('status', 'active')
+                ->whereHas('services', fn ($query) => $query->whereKey($service->getKey()))
+                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
+                ->findOrFail($requestedStaffId);
         $key = $request->header('Idempotency-Key');
 
         if (! is_string($key) || $key === '' || strlen($key) > 255) {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Public;
 
 use App\Http\Controllers\Controller;
 use App\Models\Business;
+use App\Models\Location;
 use App\Models\Service;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,12 +24,22 @@ class ServiceController extends Controller
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
 
+        $location = isset($filters['location_id'])
+            ? Location::query()
+                ->where('business_id', $business->getKey())
+                ->where('is_active', true)
+                ->findOrFail($filters['location_id'])
+            : null;
+
         $services = Service::query()
             ->where('business_id', $business->getKey())
             ->where('is_active', true)
             ->when(isset($filters['location_id']), fn ($query) => $query->whereHas(
                 'locations', fn ($locations) => $locations->whereKey($filters['location_id'])->where('locations.is_active', true),
             ))
+            ->when($location, fn ($query) => $query->with([
+                'locations' => fn ($locations) => $locations->whereKey($location->getKey()),
+            ]))
             ->when(isset($filters['search']), fn ($query) => $query->where('name', 'like', '%'.$filters['search'].'%'))
             ->orderBy('name')
             ->paginate($filters['per_page'] ?? 20);
@@ -44,7 +55,10 @@ class ServiceController extends Controller
                     'minor' => $service->price_minor,
                     'currency' => $service->currency ?? $business->default_currency,
                 ],
-            ])->values(),
+            ] + ($location ? [
+                'booking_mode' => $service->locations->first()?->pivot?->booking_mode?->value,
+                'requires_staff' => $service->locations->first()?->pivot?->booking_mode === \App\Enums\BookingMode::StaffRequired,
+            ] : []))->values(),
             'meta' => [
                 'current_page' => $services->currentPage(),
                 'per_page' => $services->perPage(),

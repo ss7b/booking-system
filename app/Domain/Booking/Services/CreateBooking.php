@@ -4,6 +4,7 @@ namespace App\Domain\Booking\Services;
 
 use App\Domain\Availability\Services\AvailabilityService;
 use App\Domain\Booking\DTOs\BookingCreationResult;
+use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
 use App\Models\Booking;
 use App\Models\BookingStatusHistory;
@@ -35,7 +36,7 @@ final class CreateBooking
         Business $business,
         Location $location,
         Service $service,
-        Staff $staff,
+        ?Staff $staff,
         DateTimeImmutable $start,
         array $customerData,
         ?string $notes,
@@ -44,25 +45,55 @@ final class CreateBooking
         string $actorType = 'customer',
         ?string $actorId = null,
     ): BookingCreationResult {
-        return DB::transaction(function () use ($business, $location, $service, $staff, $start, $customerData, $notes, $hold, $source, $actorType, $actorId): BookingCreationResult {
-            Business::query()
-                ->whereKey($business->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $expectedMode = DB::table('service_locations')
+                ->where('service_id', $service->getKey())
+                ->where('location_id', $location->getKey())
+                ->value('booking_mode');
 
-            if (
-                (string) $location->business_id !== (string) $business->getKey()
-                || (string) $service->business_id !== (string) $business->getKey()
-                || (string) $staff->business_id !== (string) $business->getKey()
-                || ! $location->is_active
-                || ! $service->is_active
-                || $staff->status !== 'active'
-                || ! $location->services()->whereKey($service->getKey())->exists()
-                || ! $staff->services()->whereKey($service->getKey())->exists()
-                || ! $staff->locations()->whereKey($location->getKey())->wherePivot('is_active', true)->exists()
-            ) {
+            if (! is_string($expectedMode)) {
                 throw new DomainException('BOOKING_RELATIONSHIP_INVALID');
             }
+
+            try {
+                return DB::transaction(function () use ($business, $location, $service, $staff, $start, $customerData, $notes, $hold, $source, $actorType, $actorId, $expectedMode): BookingCreationResult {
+                    if ($expectedMode === BookingMode::StaffRequired->value) {
+                        Business::query()
+                            ->whereKey($business->getKey())
+                            ->lockForUpdate()
+                            ->firstOrFail();
+                    }
+
+                    $assignment = $this->lockManager->lockForServiceLocation(
+                        $business,
+                        (string) $service->getKey(),
+                        (string) $location->getKey(),
+                    );
+
+                    if ($assignment->booking_mode->value !== $expectedMode) {
+                        throw new DomainException('BOOKING_MODE_CHANGED_RETRY');
+                    }
+
+                    $staffRequired = $assignment->booking_mode === BookingMode::StaffRequired;
+                    if ($staffRequired !== ($staff !== null)) {
+                        throw new DomainException($staffRequired ? 'STAFF_REQUIRED' : 'STAFF_NOT_ALLOWED');
+                    }
+
+                    if (
+                (string) $location->business_id !== (string) $business->getKey()
+                || (string) $service->business_id !== (string) $business->getKey()
+                || ! $location->is_active
+                || ! $service->is_active
+                || ! $location->services()->whereKey($service->getKey())->exists()
+                        || ($staff && (
+                            (string) $staff->business_id !== (string) $business->getKey()
+                            || $staff->status !== 'active'
+                            || ! $staff->services()->whereKey($service->getKey())->exists()
+                            || ! $staff->locations()->whereKey($location->getKey())->wherePivot('is_active', true)->exists()
+                        ))
+                    ) {
+                        throw new DomainException('BOOKING_RELATIONSHIP_INVALID');
+                    }
 
             $timezone = $location->timezone ?: $business->timezone;
             $localStart = $start->setTimezone(new DateTimeZone($timezone));
@@ -124,20 +155,29 @@ final class CreateBooking
                 throw new DomainException('CUSTOMER_SERVICE_DAILY_LIMIT');
             }
 
-            $this->lockManager->lockForStaffRange(
-                $business,
-                $staff,
-                Carbon::instance($occupiedStart),
-                Carbon::instance($occupiedEnd),
-                $timezone,
-            );
-            $this->expireStaleHolds($business, $staff, $localStart->format('Y-m-d'), $timezone);
+            if ($staff) {
+                $this->lockManager->lockForStaffRange(
+                    $business,
+                    $staff,
+                    Carbon::instance($occupiedStart),
+                    Carbon::instance($occupiedEnd),
+                    $timezone,
+                );
+                $this->expireStaleHolds($business, $staff, $localStart->format('Y-m-d'), $timezone);
 
-            if ($this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd)) {
-                throw new DomainException('SLOT_UNAVAILABLE');
+                if ($this->conflicts->hasConflict($business, $staff, $occupiedStart, $occupiedEnd)) {
+                    throw new DomainException('SLOT_UNAVAILABLE');
+                }
             }
 
-            $availability = $this->availability->forDate($business, $location, $service, $localStart->format('Y-m-d'), $staff);
+            $availability = $this->availability->forDate(
+                $business,
+                $location,
+                $service,
+                $localStart->format('Y-m-d'),
+                $staff,
+                assignment: $assignment,
+            );
             $requestedTimestamp = $start->format('U.u');
             $slotIsAvailable = collect($availability['slots'])->contains(
                 static fn (array $slot): bool => (new DateTimeImmutable($slot['start']))->format('U.u') === $requestedTimestamp,
@@ -152,7 +192,7 @@ final class CreateBooking
                 'business_id' => $business->getKey(),
                 'location_id' => $location->getKey(),
                 'service_id' => $service->getKey(),
-                'staff_id' => $staff->getKey(),
+                'staff_id' => $staff?->getKey(),
                 'customer_id' => $customer->getKey(),
                 'reference' => $this->referenceGenerator->generate($localStart),
                 'status' => $status,
@@ -189,8 +229,16 @@ final class CreateBooking
                 'occurred_at' => now(),
             ]);
 
-            return new BookingCreationResult($booking, $accessToken);
-        }, attempts: 3);
+                    return new BookingCreationResult($booking, $accessToken);
+                }, attempts: 3);
+            } catch (DomainException $exception) {
+                if ($exception->getMessage() !== 'BOOKING_MODE_CHANGED_RETRY' || $attempt === 2) {
+                    throw $exception;
+                }
+            }
+        }
+
+        throw new DomainException('BOOKING_MODE_CHANGED_RETRY');
     }
 
     private function expireStaleHolds(Business $business, Staff $staff, string $date, string $timezone): void

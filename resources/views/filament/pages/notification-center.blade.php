@@ -1,5 +1,5 @@
 <x-filament-panels::page>
-    <div class="space-y-6">
+    <div wire:poll.10s="refreshInbox" class="space-y-6">
         <section class="rounded-2xl border border-gray-200 bg-white/80 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
             <div class="flex flex-col gap-4 border-b border-gray-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-gray-700">
                 <div>

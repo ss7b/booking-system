@@ -2,15 +2,18 @@
 
 namespace Tests\Feature;
 
-use App\Domain\Availability\Services\AvailabilityService;
-use App\Domain\Booking\Services\CreateBooking;
-use App\Domain\Booking\Services\BookingManagementLink;
-use App\Domain\Booking\Services\UpdateServiceLocationSettings;
 use App\Domain\Authorization\BusinessAccess;
+use App\Domain\Availability\Services\AvailabilityService;
+use App\Domain\Booking\DTOs\BookingCreationResult;
+use App\Domain\Booking\Services\BookingManagementLink;
+use App\Domain\Booking\Services\CreateBooking;
+use App\Domain\Booking\Services\UpdateServiceLocationSettings;
+use App\Domain\Notifications\ProcessBookingNotification;
 use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
 use App\Filament\Resources\BookingResource\Pages\ListBookings;
 use App\Filament\Resources\ServiceResource\Pages\ManageServices;
+use App\Filament\Widgets\BookingCalendarWidget;
 use App\Models\AvailabilityCalendar;
 use App\Models\Booking;
 use App\Models\Business;
@@ -19,13 +22,13 @@ use App\Models\Service;
 use App\Models\ServiceLocation;
 use App\Models\Staff;
 use App\Models\User;
-use App\Domain\Notifications\ProcessBookingNotification;
 use Carbon\Carbon;
 use DateTimeImmutable;
 use DateTimeZone;
 use DomainException;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Livewire\Livewire;
@@ -168,7 +171,7 @@ class StafflessBookingTest extends TestCase
 
         $receptionist = User::factory()->create();
         $fixture['business']->users()->attach($receptionist, ['role' => 'receptionist', 'access_scope' => 'selected']);
-        \Illuminate\Support\Facades\DB::table('business_user_locations')->insert([
+        DB::table('business_user_locations')->insert([
             'business_id' => $fixture['business']->getKey(),
             'user_id' => $receptionist->getKey(),
             'location_id' => $fixture['location']->getKey(),
@@ -197,7 +200,7 @@ class StafflessBookingTest extends TestCase
         $staffUser = User::factory()->create();
         $fixture['business']->users()->attach($receptionist, ['role' => 'receptionist', 'access_scope' => 'selected']);
         $fixture['business']->users()->attach($staffUser, ['role' => 'staff', 'access_scope' => 'selected']);
-        \Illuminate\Support\Facades\DB::table('business_user_locations')->insert([
+        DB::table('business_user_locations')->insert([
             [
                 'business_id' => $fixture['business']->getKey(),
                 'user_id' => $receptionist->getKey(),
@@ -246,12 +249,20 @@ class StafflessBookingTest extends TestCase
         Livewire::actingAs($owner, 'web');
         Filament::setTenant($fixture['business']);
 
-        Livewire::test(ManageServices::class)
-            ->mountTableAction('configure_location_booking', $fixture['service'])
-            ->setTableActionData(['location_id' => $fixture['location']->getKey()])
+        $component = Livewire::test(ManageServices::class)
+            ->mountTableAction('edit', $fixture['service']);
+        $locationSettings = $component->instance()->mountedTableActionsData[0]['location_settings'];
+        $locationKey = array_key_first($locationSettings);
+
+        $component
             ->setTableActionData([
-                'booking_mode' => BookingMode::Staffless->value,
-                'capacity' => 3,
+                'location_settings' => [
+                    $locationKey => [
+                        'location_id' => $fixture['location']->getKey(),
+                        'booking_mode' => BookingMode::Staffless->value,
+                        'capacity' => 3,
+                    ],
+                ],
             ])
             ->callMountedTableAction();
 
@@ -298,6 +309,182 @@ class StafflessBookingTest extends TestCase
 
         Livewire::test(ListBookings::class)
             ->assertTableColumnStateSet('staff.name', null, $booking);
+    }
+
+    public function test_availability_picker_reads_action_form_state_and_waits_for_an_explicit_time_choice(): void
+    {
+        $fixture = $this->fixture(BookingMode::Staffless, 1);
+        $owner = User::factory()->create();
+        $fixture['business']->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::actingAs($owner, 'web');
+        Filament::setTenant($fixture['business']);
+
+        $component = Livewire::test(ListBookings::class)
+            ->mountTableAction('create_booking')
+            ->setTableActionData([
+                'location_id' => $fixture['location']->getKey(),
+                'service_id' => $fixture['service']->getKey(),
+                'starts_at' => null,
+            ])
+            ->assertDontSee('Select a location and service to load the appointment calendar.')
+            ->assertSee('Appointment time')
+            ->assertSee('Open');
+
+        $component
+            ->set(
+                'mountedTableActionsData.0.calendar_week_start',
+                Carbon::parse($fixture['date'])->startOfWeek(Carbon::SUNDAY)->toDateString(),
+            )
+            ->set('mountedTableActionsData.0.selected_date', $fixture['date'])
+            ->assertSet('mountedTableActionsData.0.starts_at', null)
+            ->assertSee('8:00 AM');
+    }
+
+    public function test_filament_can_create_a_staff_required_booking_from_the_availability_picker(): void
+    {
+        $fixture = $this->fixture(BookingMode::StaffRequired, 1);
+        $staff = Staff::query()->create([
+            'business_id' => $fixture['business']->getKey(),
+            'name' => 'Picker Staff',
+            'status' => 'active',
+        ]);
+        $staff->services()->attach($fixture['service']->getKey());
+        $staff->locations()->attach($fixture['location']->getKey(), ['is_active' => true]);
+        $owner = User::factory()->create();
+        $fixture['business']->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::actingAs($owner, 'web');
+        Filament::setTenant($fixture['business']);
+
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('create_booking')
+            ->setTableActionData([
+                'location_id' => $fixture['location']->getKey(),
+                'service_id' => $fixture['service']->getKey(),
+                'staff_id' => $staff->getKey(),
+                'calendar_week_start' => Carbon::parse($fixture['date'])->startOfWeek(Carbon::SUNDAY)->toDateString(),
+                'selected_date' => $fixture['date'],
+                'starts_at' => $fixture['date'].' 08:00:00',
+                'customer_name' => 'Picker Staff Required Customer',
+                'customer_phone' => '0501000091',
+            ])
+            ->assertDontSee('Select a location and service to load the appointment calendar.')
+            ->assertSee('Picker Staff')
+            ->assertSee('8:00 AM')
+            ->callMountedTableAction();
+
+        $booking = Booking::query()
+            ->where('business_id', $fixture['business']->getKey())
+            ->where('customer_id', '!=', null)
+            ->firstOrFail();
+
+        $this->assertSame($staff->getKey(), $booking->staff_id);
+        $this->assertSame('Picker Staff Required Customer', $booking->customer->name);
+    }
+
+    public function test_booking_calendar_includes_authorized_staffless_events_without_customer_data(): void
+    {
+        $fixture = $this->fixture(BookingMode::Staffless, 1);
+        $booking = $this->create($fixture, '09:00', '0501000062')->booking;
+        $foreignFixture = $this->fixture(BookingMode::Staffless, 1);
+        $this->create($foreignFixture, '09:00', '0501000063');
+
+        $owner = User::factory()->create();
+        $fixture['business']->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::actingAs($owner, 'web');
+        Filament::setTenant($fixture['business']);
+
+        $date = Carbon::parse($fixture['date'], 'Asia/Riyadh');
+        $range = [
+            'start' => $date->copy()->startOfDay()->toIso8601String(),
+            'end' => $date->copy()->addDay()->startOfDay()->toIso8601String(),
+            'timezone' => 'Asia/Riyadh',
+        ];
+
+        $calendar = Livewire::test(BookingCalendarWidget::class)
+            ->set('filters.staff_id', 'none')
+            ->call('fetchEvents', $range)
+            ->assertReturned(function (array $events) use ($booking): bool {
+                return count($events) === 1
+                    && $events[0]['id'] === (string) $booking->getKey()
+                    && $events[0]['extendedProps']['staffless'] === true
+                    && ! array_key_exists('customer', $events[0])
+                    && ! str_contains($events[0]['title'], 'Staffless Customer');
+            });
+
+        $actionModalId = $calendar->instance()->getId().'-action';
+
+        $calendar->call('onEventClick', ['id' => (string) $booking->getKey()])
+            ->assertSet('mountedActions.0', 'view');
+
+        $this->assertTrue($calendar->instance()->mountedActionShouldOpenModal());
+        $calendar
+            ->assertDispatched('open-modal', id: $actionModalId)
+            ->assertSee('Booking Reference: '.$booking->reference)
+            ->assertSee('No staff required');
+
+        $calendar
+            ->call('mountAction', 'reschedule')
+            ->assertSet('mountedActions.1', 'reschedule')
+            ->assertDontSee('Select a location and service to load the appointment calendar.')
+            ->assertSee('Appointment time')
+            ->assertSee('Open')
+            ->assertSee('8:00 AM');
+    }
+
+    public function test_reschedule_action_lists_staff_assigned_to_the_selected_authorized_location(): void
+    {
+        $fixture = $this->fixture(BookingMode::StaffRequired, 1);
+        $staff = Staff::query()->create([
+            'business_id' => $fixture['business']->getKey(),
+            'name' => 'Eligible Reschedule Staff',
+            'status' => 'active',
+        ]);
+        $staff->services()->attach($fixture['service']->getKey());
+        $staff->locations()->attach($fixture['location']->getKey(), ['is_active' => true]);
+        $booking = app(CreateBooking::class)->execute(
+            $fixture['business'],
+            $fixture['location'],
+            $fixture['service'],
+            $staff,
+            $this->start($fixture, '09:00'),
+            ['name' => 'Reschedule Customer', 'phone' => '0501000071'],
+            null,
+            false,
+        )->booking;
+
+        $owner = User::factory()->create();
+        $fixture['business']->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::actingAs($owner, 'web');
+        Filament::setTenant($fixture['business']);
+
+        Livewire::test(ListBookings::class)
+            ->mountTableAction('reschedule', $booking)
+            ->assertSet('mountedTableActions.0', 'reschedule')
+            ->assertSee('Eligible Reschedule Staff')
+            ->assertDontSee('Select a location and service to load the appointment calendar.')
+            ->assertSee('Open')
+            ->assertSee('8:00 AM');
+    }
+
+    public function test_bookings_page_switches_between_table_and_calendar_views(): void
+    {
+        $fixture = $this->fixture(BookingMode::Staffless, 1);
+        $owner = User::factory()->create();
+        $fixture['business']->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::actingAs($owner, 'web');
+        Filament::setTenant($fixture['business']);
+
+        Livewire::test(ListBookings::class)
+            ->assertSet('displayMode', 'table')
+            ->call('setDisplayMode', 'calendar')
+            ->assertSet('displayMode', 'calendar')
+            ->call('setDisplayMode', 'table')
+            ->assertSet('displayMode', 'table');
     }
 
     public function test_staffless_booking_uses_location_calendar_and_peak_occupancy(): void
@@ -543,7 +730,7 @@ class StafflessBookingTest extends TestCase
         return compact('business', 'location', 'service', 'date');
     }
 
-    private function create(array $fixture, string $time, string $phone, bool $hold = false): \App\Domain\Booking\DTOs\BookingCreationResult
+    private function create(array $fixture, string $time, string $phone, bool $hold = false): BookingCreationResult
     {
         return app(CreateBooking::class)->execute(
             $fixture['business'],

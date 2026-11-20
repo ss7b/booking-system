@@ -2,21 +2,24 @@
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\ServiceResource\Pages\ManageServices;
+use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Booking\Services\UpdateServiceLocationSettings;
 use App\Enums\BookingMode;
+use App\Filament\Resources\ServiceResource\Pages\ManageServices;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
-use App\Models\ServiceLocation;
+use App\Models\User;
+use DomainException;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Forms\Get;
-use Filament\Notifications\Notification;
 use Filament\Tables;
 use Filament\Tables\Table;
-use DomainException;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ServiceResource extends TenantResource
 {
@@ -28,21 +31,83 @@ class ServiceResource extends TenantResource
     {
         return $form
             ->schema([
-                Forms\Components\TextInput::make('name')->required()->maxLength(200),
-                Forms\Components\TextInput::make('slug')->required()->alphaDash()->maxLength(200),
-                Forms\Components\Textarea::make('description')->columnSpanFull(),
-                Forms\Components\Select::make('locations')
-                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->select('id')))
-                    ->multiple()->preload(),
-                Forms\Components\TextInput::make('duration_minutes')->numeric()->integer()->minValue(1)->required(),
-                Forms\Components\TextInput::make('slot_interval_minutes')->numeric()->integer()->minValue(1)->required(),
-                Forms\Components\TextInput::make('buffer_before_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
-                Forms\Components\TextInput::make('buffer_after_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
-                Forms\Components\TextInput::make('min_notice_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
-                Forms\Components\TextInput::make('max_advance_days')->numeric()->integer()->minValue(0)->nullable(),
-                Forms\Components\TextInput::make('price_minor')->numeric()->integer()->minValue(0)->nullable(),
-                Forms\Components\TextInput::make('currency')->length(3)->default('SAR')->nullable(),
-                Forms\Components\Toggle::make('is_active')->default(true),
+                Forms\Components\Section::make('Service details')
+                    ->schema([
+                        Forms\Components\TextInput::make('name')->required()->maxLength(200),
+                        Forms\Components\TextInput::make('slug')->required()->alphaDash()->maxLength(200),
+                        Forms\Components\Textarea::make('description')->columnSpanFull(),
+                        Forms\Components\TextInput::make('duration_minutes')->numeric()->integer()->minValue(1)->required(),
+                        Forms\Components\TextInput::make('slot_interval_minutes')->numeric()->integer()->minValue(1)->required(),
+                        Forms\Components\TextInput::make('buffer_before_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
+                        Forms\Components\TextInput::make('buffer_after_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
+                        Forms\Components\TextInput::make('min_notice_minutes')->numeric()->integer()->minValue(0)->default(0)->required(),
+                        Forms\Components\TextInput::make('max_advance_days')
+                            ->numeric()
+                            ->integer()
+                            ->minValue(0)
+                            ->nullable()
+                            ->helperText('0 prevents bookings on future days. A positive value sets the maximum advance period in days. Leave empty for no limit.'),
+                        Forms\Components\TextInput::make('price_minor')->numeric()->integer()->minValue(0)->nullable(),
+                        Forms\Components\TextInput::make('currency')->length(3)->default('SAR')->nullable(),
+                        Forms\Components\Toggle::make('is_active')->default(true),
+                    ])
+                    ->columns(2),
+                Forms\Components\Section::make('Booking settings per location')
+                    ->description('Configure how this service is booked in each location.')
+                    ->schema([
+                        Forms\Components\Repeater::make('location_settings')
+                            ->label('Locations')
+                            ->schema([
+                                Forms\Components\Select::make('location_id')
+                                    ->label('Location')
+                                    ->options(fn (): array => self::availableLocations())
+                                    ->searchable()
+                                    ->disableOptionsWhenSelectedInSiblingRepeaterItems()
+                                    ->required(),
+                                Forms\Components\Radio::make('booking_mode')
+                                    ->label('Booking mode')
+                                    ->options([
+                                        BookingMode::StaffRequired->value => 'Requires staff',
+                                        BookingMode::Staffless->value => 'No staff required',
+                                    ])
+                                    ->descriptions([
+                                        BookingMode::StaffRequired->value => 'Customers choose an available staff member when booking.',
+                                        BookingMode::Staffless->value => 'Bookings use the location calendar and service capacity.',
+                                    ])
+                                    ->default(BookingMode::StaffRequired->value)
+                                    ->live()
+                                    ->required(),
+                                Forms\Components\TextInput::make('capacity')
+                                    ->numeric()
+                                    ->integer()
+                                    ->minValue(1)
+                                    ->default(1)
+                                    ->required(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value)
+                                    ->dehydratedWhenHidden()
+                                    ->helperText('Maximum number of overlapping bookings for this service at this location.')
+                                    ->visible(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value),
+                                Forms\Components\Placeholder::make('availability_warning')
+                                    ->label('Availability calendar')
+                                    ->content('This location has no availability calendar. Customers will not see bookable dates until a calendar is configured.')
+                                    ->visible(fn (Get $get): bool => self::locationHasNoCalendar($get('location_id'))
+                                        && $get('booking_mode') === BookingMode::Staffless->value),
+                            ])
+                            ->defaultItems(1)
+                            ->minItems(1)
+                            ->addActionLabel('Add location')
+                            ->required()
+                            ->columnSpanFull(),
+                    ]),
+            ]);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->withCount('locations')
+            ->withCount([
+                'locations as staffless_locations_count' => fn (Builder $query) => $query
+                    ->where('service_locations.booking_mode', BookingMode::Staffless->value),
             ]);
     }
 
@@ -54,92 +119,123 @@ class ServiceResource extends TenantResource
                 Tables\Columns\TextColumn::make('duration_minutes')->suffix(' min')->sortable(),
                 Tables\Columns\TextColumn::make('slot_interval_minutes')->label('Slot interval')->suffix(' min'),
                 Tables\Columns\TextColumn::make('price_minor')->label('Price (minor)'),
+                Tables\Columns\TextColumn::make('location_summary')
+                    ->label('Booking locations')
+                    ->state(fn (Service $record): string => sprintf(
+                        '%d locations, %d staffless, %d require staff',
+                        $record->locations_count,
+                        $record->staffless_locations_count,
+                        $record->locations_count - $record->staffless_locations_count,
+                    )),
                 Tables\Columns\IconColumn::make('is_active')->boolean(),
             ])
             ->filters([Tables\Filters\TernaryFilter::make('is_active')])
             ->actions([
-                Tables\Actions\Action::make('configure_location_booking')
-                    ->label('Configure booking per location')
-                    ->icon('heroicon-o-adjustments-horizontal')
-                    ->form([
-                        Forms\Components\Select::make('location_id')
-                            ->label('Location')
-                            ->options(fn (Service $record) => $record->locations()
-                                ->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)
-                                    ->locations(Filament::auth()->user(), Filament::getTenant())
-                                    ->select('id'))
-                                ->orderBy('locations.name')
-                                ->pluck('locations.name', 'locations.id'))
-                            ->live()
-                            ->required()
-                            ->afterStateUpdated(function (?string $state, callable $set, Service $record): void {
-                                if (! $state) {
-                                    return;
-                                }
+                Tables\Actions\EditAction::make()
+                    ->fillForm(function (Service $record): array {
+                        $record->load('locations');
 
-                                $assignment = ServiceLocation::query()
-                                    ->where('service_id', $record->getKey())
-                                    ->where('location_id', $state)
-                                    ->first();
-                                $set('booking_mode', $assignment?->booking_mode?->value ?? BookingMode::StaffRequired->value);
-                                $set('capacity', $assignment?->capacity ?? 1);
-                            }),
-                        Forms\Components\Select::make('booking_mode')
-                            ->options([
-                                BookingMode::StaffRequired->value => 'Requires staff',
-                                BookingMode::Staffless->value => 'Staffless',
-                            ])
-                            ->live()
-                            ->required(),
-                        Forms\Components\TextInput::make('capacity')
-                            ->numeric()
-                            ->integer()
-                            ->minValue(1)
-                            ->required()
-                            ->dehydratedWhenHidden()
-                            ->visible(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value),
-                    ])
-                    ->action(function (Service $record, array $data): void {
+                        return [
+                            ...$record->attributesToArray(),
+                            'location_settings' => $record->locations
+                                ->map(fn (Location $location): array => [
+                                    'location_id' => (string) $location->getKey(),
+                                    'booking_mode' => $location->pivot->booking_mode->value,
+                                    'capacity' => $location->pivot->capacity,
+                                ])
+                                ->all(),
+                        ];
+                    })
+                    ->using(function (array $data, Service $record): Service {
+                        $settings = array_values($data['location_settings'] ?? []);
+                        unset($data['location_settings'], $data['id'], $data['business_id'], $data['created_at'], $data['updated_at']);
+
                         $business = Filament::getTenant();
                         $user = Filament::auth()->user();
-                        abort_unless($business instanceof Business && $user, 500);
+                        abort_unless($business instanceof Business && $user instanceof User, 500);
 
-                        $access = app(\App\Domain\Authorization\BusinessAccess::class);
-                        abort_unless($access->canManageService($user, $record), 403);
+                        return DB::transaction(function () use ($data, $record, $settings, $business, $user): Service {
+                            self::saveLocationSettings($business, $record, $user, $settings);
+                            $record->fill($data);
+                            $record->save();
 
-                        $location = Location::query()
-                            ->where('business_id', $business->getKey())
-                            ->findOrFail($data['location_id']);
-                        abort_unless($access->canAccessLocation($user, $business, $location), 404);
-                        $mode = BookingMode::tryFrom((string) $data['booking_mode']);
-                        abort_unless($mode !== null, 422);
-
-                        try {
-                            app(UpdateServiceLocationSettings::class)->execute(
-                                $business,
-                                $record,
-                                $location,
-                                $mode,
-                                (int) ($data['capacity'] ?? 1),
-                            );
-
-                            Notification::make()->title('Location booking settings saved')->success()->send();
-                        } catch (DomainException $exception) {
-                            $message = match ($exception->getMessage()) {
-                                'BOOKING_MODE_CHANGE_BLOCKED' => 'Booking mode cannot change while active future bookings or holds exist.',
-                                'CAPACITY_BELOW_CURRENT_OCCUPANCY' => 'Capacity cannot be lower than current future peak occupancy.',
-                                'CAPACITY_MUST_BE_POSITIVE' => 'Capacity must be at least one.',
-                                default => $exception->getMessage(),
-                            };
-
-                            Notification::make()->title('Booking settings were not saved')->body($message)->danger()->send();
-                        }
-                    })
-                    ->visible(fn (Service $record): bool => app(\App\Domain\Authorization\BusinessAccess::class)
-                        ->canManageService(Filament::auth()->user(), $record)),
-                Tables\Actions\EditAction::make(),
+                            return $record;
+                        }, attempts: 3);
+                    }),
                 Tables\Actions\DeleteAction::make()->visible(fn (Service $record): bool => ! $record->bookings()->exists()),
             ]);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public static function availableLocations(): array
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        if (! $business instanceof Business || ! $user instanceof User) {
+            return [];
+        }
+
+        return app(BusinessAccess::class)->locations($user, $business)
+            ->orderBy('name')
+            ->pluck('name', 'id')
+            ->all();
+    }
+
+    private static function locationHasNoCalendar(mixed $locationId): bool
+    {
+        $business = Filament::getTenant();
+        if (! $business instanceof Business || ! is_string($locationId) || $locationId === '') {
+            return false;
+        }
+
+        return Location::query()
+            ->where('business_id', $business->getKey())
+            ->whereKey($locationId)
+            ->whereNull('calendar_id')
+            ->exists();
+    }
+
+    /**
+     * @param  list<array{location_id: string, booking_mode: string, capacity: int|string}>  $settings
+     */
+    public static function saveLocationSettings(
+        Business $business,
+        Service $service,
+        User $user,
+        array $settings,
+    ): void {
+        $locationIds = array_values(array_unique(array_map(
+            static fn (array $setting): string => (string) ($setting['location_id'] ?? ''),
+            $settings,
+        )));
+        $authorizedCount = app(BusinessAccess::class)->locations($user, $business)
+            ->whereIn('id', $locationIds)
+            ->count();
+
+        if (in_array('', $locationIds, true) || $authorizedCount !== count($locationIds)) {
+            throw ValidationException::withMessages([
+                'location_settings' => 'Choose only locations you are authorized to manage in this business.',
+            ]);
+        }
+
+        try {
+            app(UpdateServiceLocationSettings::class)
+                ->executeManyWithinTransaction($business, $service, $settings);
+        } catch (DomainException $exception) {
+            $message = match ($exception->getMessage()) {
+                'BOOKING_MODE_CHANGE_BLOCKED' => 'Booking mode cannot change while active future bookings or holds exist.',
+                'CAPACITY_BELOW_CURRENT_OCCUPANCY' => 'Capacity cannot be lower than current future peak occupancy.',
+                'CAPACITY_MUST_BE_POSITIVE' => 'Capacity must be at least one.',
+                'LOCATION_REMOVAL_BLOCKED' => 'A location cannot be removed while it has active future bookings or holds.',
+                'DUPLICATE_SERVICE_LOCATION' => 'Choose each location only once.',
+                default => 'The booking settings could not be saved. Check the selected locations and try again.',
+            };
+
+            throw ValidationException::withMessages(['location_settings' => $message]);
+        }
     }
 
     public static function getPages(): array

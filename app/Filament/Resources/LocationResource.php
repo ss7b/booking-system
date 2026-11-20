@@ -31,9 +31,6 @@ class LocationResource extends TenantResource
                         ->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->nullable(),
-                Forms\Components\Select::make('services')
-                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(\App\Domain\Authorization\BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
-                    ->multiple()->preload(),
                 Forms\Components\Textarea::make('address')->columnSpanFull(),
                 Forms\Components\TextInput::make('phone')->tel()->maxLength(50),
                 Forms\Components\Toggle::make('is_active')->default(true),

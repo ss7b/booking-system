@@ -2,20 +2,23 @@
 
 namespace App\Filament\Resources;
 
-use App\Domain\Booking\Services\CreateBooking;
-use App\Domain\Booking\Services\RescheduleBooking;
-use App\Domain\Booking\Services\TransitionBooking;
 use App\Domain\Authorization\BusinessAccess;
+use App\Domain\Booking\Services\CreateBooking;
 use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
+use App\Filament\Forms\Components\BookingAvailabilityPicker;
+use App\Filament\Resources\BookingResource\BookingManagementActions;
 use App\Filament\Resources\BookingResource\Pages\ListBookings;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
 use App\Models\Staff;
+use DateTimeImmutable;
+use DateTimeZone;
+use DomainException;
 use Filament\Facades\Filament;
-use Filament\Forms\Components\DateTimePicker;
+use Filament\Forms\Components\Hidden;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -28,9 +31,6 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
-use DateTimeImmutable;
-use DateTimeZone;
-use DomainException;
 
 class BookingResource extends Resource
 {
@@ -92,7 +92,13 @@ class BookingResource extends Resource
                         Select::make('location_id')
                             ->options(fn () => app(BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
                             ->live()->required()
-                            ->afterStateUpdated(fn (callable $set) => [$set('service_id', null), $set('staff_id', null)]),
+                            ->afterStateUpdated(function (callable $set): void {
+                                $set('service_id', null);
+                                $set('staff_id', null);
+                                $set('selected_date', null);
+                                $set('calendar_week_start', null);
+                                $set('starts_at', null);
+                            }),
                         Select::make('service_id')
                             ->options(fn (Get $get) => Service::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
@@ -100,7 +106,12 @@ class BookingResource extends Resource
                                 ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('locations.is_active', true)))
                                 ->orderBy('name')->pluck('name', 'id'))
                             ->live()->required()
-                            ->afterStateUpdated(fn (callable $set) => $set('staff_id', null)),
+                            ->afterStateUpdated(function (callable $set): void {
+                                $set('staff_id', null);
+                                $set('selected_date', null);
+                                $set('calendar_week_start', null);
+                                $set('starts_at', null);
+                            }),
                         Select::make('staff_id')
                             ->options(fn (Get $get) => Staff::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
@@ -109,13 +120,19 @@ class BookingResource extends Resource
                                 ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('staff_locations.is_active', true)))
                                 ->orderBy('name')->pluck('name', 'id'))
                             ->visible(fn (Get $get): bool => self::staffRequired($get('service_id'), $get('location_id')))
-                            ->required(fn (Get $get): bool => self::staffRequired($get('service_id'), $get('location_id'))),
-                        DateTimePicker::make('starts_at')
-                            ->timezone(fn (Get $get): string => Location::query()
-                                ->where('business_id', Filament::getTenant()?->getKey())
-                                ->whereKey($get('location_id'))
-                                ->value('timezone') ?: (Filament::getTenant()?->timezone ?? config('app.timezone')))
-                            ->seconds(false)->required(),
+                            ->required(fn (Get $get): bool => self::staffRequired($get('service_id'), $get('location_id')))
+                            ->live()
+                            ->afterStateUpdated(function (callable $set): void {
+                                $set('selected_date', null);
+                                $set('calendar_week_start', null);
+                                $set('starts_at', null);
+                            }),
+                        Hidden::make('selected_date')->dehydrated(false),
+                        Hidden::make('calendar_week_start')->dehydrated(false),
+                        BookingAvailabilityPicker::make('starts_at')
+                            ->label('Appointment time')
+                            ->columnSpanFull()
+                            ->required(),
                         TextInput::make('customer_name')->label('Customer name')->required()->maxLength(200),
                         TextInput::make('customer_phone')->label('Customer phone')->tel()->required()->maxLength(50),
                         TextInput::make('customer_email')->label('Customer email')->email()->maxLength(255)->nullable(),
@@ -151,7 +168,7 @@ class BookingResource extends Resource
                                 $location,
                                 $service,
                                 $staff,
-                                new DateTimeImmutable($data['starts_at'], new DateTimeZone(config('app.timezone'))),
+                                new DateTimeImmutable($data['starts_at'], new DateTimeZone($location->timezone ?: $business->timezone)),
                                 [
                                     'name' => $data['customer_name'],
                                     'phone' => $data['customer_phone'],
@@ -177,111 +194,7 @@ class BookingResource extends Resource
                         }
                     }),
             ])
-            ->actions([
-                Action::make('confirm')
-                    ->color('success')
-                    ->requiresConfirmation()
-                    ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Held)
-                    ->action(function (Booking $record): void {
-                        self::authorizeBookingAction($record);
-                        app(TransitionBooking::class)->execute($record, BookingStatus::Confirmed, null, 'user', (string) Filament::auth()->id());
-                    }),
-                Action::make('cancel')
-                    ->color('danger')
-                    ->form([Textarea::make('reason')->maxLength(255)])
-                    ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true))
-                    ->action(function (Booking $record, array $data): void {
-                        self::authorizeBookingAction($record);
-                        app(TransitionBooking::class)->execute($record, BookingStatus::Cancelled, $data['reason'] ?? null, 'user', (string) Filament::auth()->id());
-                    }),
-                Action::make('check_in')
-                    ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Confirmed)
-                    ->action(function (Booking $record): void {
-                        self::authorizeBookingAction($record);
-                        app(TransitionBooking::class)->execute($record, BookingStatus::CheckedIn, null, 'user', (string) Filament::auth()->id());
-                    }),
-                Action::make('complete')
-                    ->visible(fn (Booking $record): bool => $record->status === BookingStatus::CheckedIn)
-                    ->action(function (Booking $record): void {
-                        self::authorizeBookingAction($record);
-                        app(TransitionBooking::class)->execute($record, BookingStatus::Completed, null, 'user', (string) Filament::auth()->id());
-                    }),
-                Action::make('no_show')
-                    ->color('warning')
-                    ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Confirmed, BookingStatus::CheckedIn], true))
-                    ->action(function (Booking $record): void {
-                        self::authorizeBookingAction($record);
-                        app(TransitionBooking::class)->execute($record, BookingStatus::NoShow, null, 'user', (string) Filament::auth()->id());
-                    }),
-                Action::make('reschedule')
-                    ->label('Reschedule')
-                    ->icon('heroicon-o-calendar')
-                    ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true))
-                    ->fillForm(fn (Booking $record): array => [
-                        'location_id' => $record->location_id,
-                        'staff_id' => $record->staff_id,
-                        'starts_at' => $record->starts_at,
-                    ])
-                    ->form([
-                        Select::make('location_id')
-                            ->options(fn () => Location::query()->where('business_id', Filament::getTenant()?->getKey())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
-                            ->live()->required(),
-                        Select::make('staff_id')
-                            ->options(fn (Get $get, Booking $record) => Staff::query()
-                                ->where('business_id', Filament::getTenant()?->getKey())
-                                ->where('status', 'active')
-                                ->whereHas('services', fn ($query) => $query->whereKey($record->service_id))
-                                ->when($get('location_id'), fn ($query, $locationId) => $query->whereHas('locations', fn ($locations) => $locations->whereKey($locationId)->where('staff_locations.is_active', true)))
-                                ->orderBy('name')->pluck('name', 'id'))
-                            ->visible(fn (Get $get, Booking $record): bool => self::staffRequired($record->service_id, $get('location_id')))
-                            ->required(fn (Get $get, Booking $record): bool => self::staffRequired($record->service_id, $get('location_id'))),
-                        DateTimePicker::make('starts_at')
-                            ->timezone(fn (Get $get): string => Location::query()
-                                ->where('business_id', Filament::getTenant()?->getKey())
-                                ->whereKey($get('location_id'))
-                                ->value('timezone') ?: (Filament::getTenant()?->timezone ?? config('app.timezone')))
-                            ->seconds(false)->required(),
-                        Textarea::make('reason')->maxLength(255)->nullable(),
-                    ])
-                    ->action(function (Booking $record, array $data): void {
-                        $business = Filament::getTenant();
-                        abort_unless($business instanceof Business, 500);
-                        self::authorizeBookingAction($record);
-                        $location = Location::query()->where('business_id', $business->getKey())->where('is_active', true)->findOrFail($data['location_id']);
-                        abort_unless(app(BusinessAccess::class)->canAccessLocation(Filament::auth()->user(), $business, $location), 404);
-                        $staff = empty($data['staff_id'])
-                            ? null
-                            : Staff::query()
-                                ->where('business_id', $business->getKey())
-                                ->where('status', 'active')
-                                ->whereHas('services', fn ($query) => $query->whereKey($record->service_id))
-                                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey())->where('staff_locations.is_active', true))
-                                ->findOrFail($data['staff_id']);
-
-                        try {
-                            $updated = app(RescheduleBooking::class)->execute(
-                                $business,
-                                $record,
-                                $location,
-                                $staff,
-                                new DateTimeImmutable($data['starts_at'], new DateTimeZone(config('app.timezone'))),
-                                'user',
-                                (string) Filament::auth()->id(),
-                                $data['reason'] ?? null,
-                            );
-
-                            Notification::make()->title('Booking rescheduled')->body($updated->reference)->success()->send();
-                        } catch (DomainException $exception) {
-                            $message = match ($exception->getMessage()) {
-                                'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
-                                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'You already have an active booking for this service on the selected date.',
-                                default => $exception->getMessage(),
-                            };
-
-                            Notification::make()->title('Booking was not rescheduled')->body($message)->danger()->send();
-                        }
-                    }),
-            ])
+            ->actions(BookingManagementActions::forTable())
             ->defaultSort('starts_at');
     }
 
@@ -311,11 +224,6 @@ class BookingResource extends Resource
         $user = Filament::auth()->user();
 
         return $business instanceof Business && $user && app(BusinessAccess::class)->canManageBookings($user, $business);
-    }
-
-    private static function authorizeBookingAction(Booking $record): void
-    {
-        abort_unless(app(BusinessAccess::class)->canManageBooking(Filament::auth()->user(), $record), 403);
     }
 
     private static function staffRequired(?string $serviceId, ?string $locationId): bool

@@ -24,6 +24,12 @@ final class BusinessAccess
             return null;
         }
 
+        $membership = BusinessMembershipRequestContext::membership($user, $business)
+            ?? BookingDisplayMembershipContext::membership($user, $business);
+        if ($membership !== null) {
+            return $membership['role'];
+        }
+
         $value = DB::table('business_user')
             ->where('business_id', $business->getKey())
             ->where('user_id', $user->getKey())
@@ -34,6 +40,12 @@ final class BusinessAccess
 
     public function scope(User $user, Business $business): ?BranchAccessScope
     {
+        $membership = BusinessMembershipRequestContext::membership($user, $business)
+            ?? BookingDisplayMembershipContext::membership($user, $business);
+        if ($membership !== null) {
+            return $membership['scope'];
+        }
+
         $value = DB::table('business_user')
             ->where('business_id', $business->getKey())
             ->where('user_id', $user->getKey())
@@ -77,6 +89,11 @@ final class BusinessAccess
             return true;
         }
 
+        $allowedLocations = BusinessMembershipRequestContext::allowedLocationIds($user, $business);
+        if ($allowedLocations !== null) {
+            return in_array((string) $location->getKey(), $allowedLocations, true);
+        }
+
         return DB::table('business_user_locations')
             ->where('business_id', $business->getKey())
             ->where('user_id', $user->getKey())
@@ -93,6 +110,15 @@ final class BusinessAccess
 
         if ($this->role($user, $business) !== BusinessRole::Staff) {
             return true;
+        }
+
+        if (BusinessMembershipRequestContext::isActiveFor($user, $business)) {
+            $staffId = BusinessMembershipRequestContext::linkedStaffId($user, $business);
+
+            return $staffId !== null && Staff::query()->whereKey($staffId)
+                ->where('business_id', $business->getKey())
+                ->whereHas('locations', fn ($query) => $query->whereKey($location->getKey()))
+                ->exists();
         }
 
         return Staff::query()->where('business_id', $business->getKey())

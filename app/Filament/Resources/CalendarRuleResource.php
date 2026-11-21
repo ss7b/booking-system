@@ -3,7 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\CalendarRuleResource\Pages\ManageCalendarRules;
-use App\Models\AvailabilityCalendar;
+use App\Domain\Authorization\BusinessMembershipRequestContext;
 use App\Models\CalendarRule;
 use App\Domain\Authorization\BusinessAccess;
 use Filament\Facades\Filament;
@@ -28,6 +28,8 @@ class CalendarRuleResource extends Resource
         $user = Filament::auth()->user();
 
         if (! $business || ! $user) return CalendarRule::query()->whereRaw('1 = 0');
+
+        BusinessMembershipRequestContext::beginForResource('calendar_rules', $user, $business);
 
         return CalendarRule::query()->whereIn('calendar_id', app(BusinessAccess::class)->calendars($user, $business)->select('id'));
     }
@@ -69,10 +71,10 @@ class CalendarRuleResource extends Resource
                 Tables\Columns\TextColumn::make('start_time')->time('H:i'),
                 Tables\Columns\TextColumn::make('end_time')->time('H:i'),
             ])
-            ->filters([Tables\Filters\SelectFilter::make('calendar_id')->options(fn () => AvailabilityCalendar::query()->where('business_id', Filament::getTenant()?->getKey())->pluck('name', 'id'))])
+            ->filters([Tables\Filters\SelectFilter::make('calendar_id')->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))])
             ->actions([
-                Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make(),
+                Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
+                Tables\Actions\DeleteAction::make()->modalHeading(__('filament-actions::delete.single.label')),
             ]);
     }
 

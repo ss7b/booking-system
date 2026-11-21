@@ -17,7 +17,11 @@ class CalendarRulePolicy
     {
         $business = Filament::getTenant();
 
-        return $business && $this->access->canManageOperations($user, $business) && $this->calendarQuery($user)->exists();
+        if (! $business) {
+            return false;
+        }
+
+        return $this->access->canManageOperations($user, $business) && $this->calendarQuery($user)->exists();
     }
 
     public function view(User $user, CalendarRule $rule): bool

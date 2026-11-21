@@ -3,6 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Domain\Authorization\BusinessAccess;
+use App\Domain\Authorization\BusinessMembershipRequestContext;
 use App\Domain\Booking\Services\CreateBooking;
 use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
@@ -50,6 +51,8 @@ class BookingResource extends Resource
         if (! $tenant instanceof Business || ! $user) {
             return parent::getEloquentQuery()->whereRaw('1 = 0');
         }
+
+        BusinessMembershipRequestContext::beginForBooking($user, $tenant);
 
         return app(BusinessAccess::class)->bookings($user, $tenant);
     }

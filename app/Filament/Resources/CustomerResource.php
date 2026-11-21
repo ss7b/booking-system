@@ -38,8 +38,10 @@ class CustomerResource extends TenantResource
             ])
             ->filters([])
             ->actions([
-                Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make()->visible(fn (Customer $record): bool => ! $record->bookings()->exists()),
+                Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
+                Tables\Actions\DeleteAction::make()
+                    ->modalHeading(__('filament-actions::delete.single.label'))
+                    ->visible(fn (Customer $record): bool => ! $record->bookings()->exists()),
             ]);
     }
 

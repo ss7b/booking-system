@@ -63,8 +63,10 @@ class StaffResource extends TenantResource
             ])
             ->filters([Tables\Filters\SelectFilter::make('status')->options(['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'])])
             ->actions([
-                Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make()->visible(fn (Staff $record): bool => ! $record->bookings()->exists() && ! $record->blocks()->exists()),
+                Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
+                Tables\Actions\DeleteAction::make()
+                    ->modalHeading(__('filament-actions::delete.single.label'))
+                    ->visible(fn (Staff $record): bool => ! $record->bookings()->exists() && ! $record->blocks()->exists()),
             ]);
     }
 

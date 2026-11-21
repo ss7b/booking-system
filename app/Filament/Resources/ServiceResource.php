@@ -132,6 +132,7 @@ class ServiceResource extends TenantResource
             ->filters([Tables\Filters\TernaryFilter::make('is_active')])
             ->actions([
                 Tables\Actions\EditAction::make()
+                    ->modalHeading(__('filament-actions::edit.single.label'))
                     ->fillForm(function (Service $record): array {
                         $record->load('locations');
 
@@ -162,7 +163,9 @@ class ServiceResource extends TenantResource
                             return $record;
                         }, attempts: 3);
                     }),
-                Tables\Actions\DeleteAction::make()->visible(fn (Service $record): bool => ! $record->bookings()->exists()),
+                Tables\Actions\DeleteAction::make()
+                    ->modalHeading(__('filament-actions::delete.single.label'))
+                    ->visible(fn (Service $record): bool => ! $record->bookings()->exists()),
             ]);
     }
 

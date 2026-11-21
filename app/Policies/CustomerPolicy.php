@@ -16,7 +16,11 @@ class CustomerPolicy
     {
         $business = Filament::getTenant();
 
-        return $business instanceof Business && $this->access->canManageBookings($user, $business);
+        if (! $business instanceof Business) {
+            return false;
+        }
+
+        return $this->access->canManageBookings($user, $business);
     }
 
     public function view(User $user, Customer $customer): bool

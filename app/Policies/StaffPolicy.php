@@ -17,8 +17,11 @@ class StaffPolicy
     {
         $business = Filament::getTenant();
 
-        return $business instanceof Business
-            && ($this->access->canManageOperations($user, $business) || $this->access->staff($user, $business)->exists());
+        if (! $business instanceof Business) {
+            return false;
+        }
+
+        return $this->access->canManageOperations($user, $business) || $this->access->staff($user, $business)->exists();
     }
 
     public function view(User $user, Staff $staff): bool

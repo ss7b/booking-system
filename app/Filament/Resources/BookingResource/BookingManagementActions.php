@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\BookingResource;
 
+use App\Domain\Authorization\BookingDisplayMembershipContext;
 use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Booking\Services\RescheduleBooking;
 use App\Domain\Booking\Services\TransitionBooking;
 use App\Enums\BookingMode;
 use App\Enums\BookingStatus;
 use App\Filament\Forms\Components\BookingAvailabilityPicker;
+use App\Filament\Resources\BookingResource\Pages\ListBookings;
 use App\Filament\Widgets\BookingCalendarWidget;
 use App\Models\Booking;
 use App\Models\Business;
@@ -27,6 +29,7 @@ use Filament\Notifications\Notification;
 use Filament\Support\Exceptions\Halt;
 use Filament\Tables\Actions\Action as TableAction;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
@@ -55,12 +58,13 @@ final class BookingManagementActions
     private static function makeActions(string $actionClass, ?\Closure $recordResolver = null): array
     {
         $make = fn (string $name): MountableAction => self::makeAction($actionClass, $name, $recordResolver);
+        $allows = fn (string $ability, Booking $record): bool => self::allowsForDisplay($ability, $record, $actionClass === TableAction::class);
 
         return [
             $make('confirm')
                 ->color('success')
                 ->requiresConfirmation()
-                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Held && self::allowsForDisplay('confirm', $record))
+                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Held && $allows('confirm', $record))
                 ->action(fn (Booking $record) => self::transition(
                     $record,
                     BookingStatus::Confirmed,
@@ -71,7 +75,7 @@ final class BookingManagementActions
                 ->color('danger')
                 ->form([Textarea::make('reason')->maxLength(255)])
                 ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true)
-                    && self::allowsForDisplay('cancel', $record))
+                    && $allows('cancel', $record))
                 ->action(fn (Booking $record, array $data) => self::transition(
                     $record,
                     BookingStatus::Cancelled,
@@ -80,7 +84,7 @@ final class BookingManagementActions
                     $data['reason'] ?? null,
                 )),
             $make('check_in')
-                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Confirmed && self::allowsForDisplay('update', $record))
+                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::Confirmed && $allows('update', $record))
                 ->action(fn (Booking $record) => self::transition(
                     $record,
                     BookingStatus::CheckedIn,
@@ -88,7 +92,7 @@ final class BookingManagementActions
                     'Booking checked in',
                 )),
             $make('complete')
-                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::CheckedIn && self::allowsForDisplay('update', $record))
+                ->visible(fn (Booking $record): bool => $record->status === BookingStatus::CheckedIn && $allows('update', $record))
                 ->action(fn (Booking $record) => self::transition(
                     $record,
                     BookingStatus::Completed,
@@ -98,7 +102,7 @@ final class BookingManagementActions
             $make('no_show')
                 ->color('warning')
                 ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Confirmed, BookingStatus::CheckedIn], true)
-                    && self::allowsForDisplay('update', $record))
+                    && $allows('update', $record))
                 ->action(fn (Booking $record) => self::transition(
                     $record,
                     BookingStatus::NoShow,
@@ -109,7 +113,7 @@ final class BookingManagementActions
                 ->label('Reschedule')
                 ->icon('heroicon-o-calendar')
                 ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true)
-                    && self::allowsForDisplay('reschedule', $record))
+                    && $allows('reschedule', $record))
                 ->fillForm(fn (Booking $record): array => [
                     'location_id' => $record->location_id,
                     'service_id' => $record->service_id,
@@ -162,16 +166,34 @@ final class BookingManagementActions
         return $action;
     }
 
-    private static function allowsForDisplay(string $ability, Booking $record): bool
+    private static function allowsForDisplay(string $ability, Booking $record, bool $tableAction): bool
     {
+        $request = request();
+        $user = Filament::auth()->user();
+        $business = Filament::getTenant();
+        $guard = Filament::getAuthGuard();
+        $useLegacyMembershipContext = $tableAction
+            && ! config('booking.unified_authorization_display_context', false)
+            && config('booking.authorization_display_context')
+            && $request->getRealMethod() === 'GET'
+            && $request->routeIs(ListBookings::getRouteName())
+            && $user instanceof User
+            && $business instanceof Business
+            && (string) $record->business_id === (string) $business->getKey();
+
+        if ($useLegacyMembershipContext && (Auth::getDefaultDriver() !== $guard || (Auth::userResolver())() !== $user)) {
+            return Gate::allows($ability, $record);
+        }
+
         $cacheKey = implode(':', [
             $ability,
-            (string) Filament::auth()->id(),
-            (string) Filament::getTenant()?->getKey(),
+            $guard,
+            (string) $user?->getAuthIdentifier(),
+            (string) $business?->getKey(),
             (string) $record->getKey(),
         ]);
         $attribute = self::class.'.display_authorization';
-        $cache = request()->attributes->get($attribute, []);
+        $cache = $request->attributes->get($attribute, []);
         if (! is_array($cache)) {
             $cache = [];
         }
@@ -180,8 +202,14 @@ final class BookingManagementActions
             return $cache[$cacheKey];
         }
 
-        $cache[$cacheKey] = Gate::allows($ability, $record);
-        request()->attributes->set($attribute, $cache);
+        $decision = fn (): bool => Gate::allows($ability, $record);
+        if ($useLegacyMembershipContext) {
+            $cache[$cacheKey] = BookingDisplayMembershipContext::evaluate($request, $guard, $user, $business, $decision);
+        } else {
+            $cache[$cacheKey] = $decision();
+        }
+
+        $request->attributes->set($attribute, $cache);
 
         return $cache[$cacheKey];
     }

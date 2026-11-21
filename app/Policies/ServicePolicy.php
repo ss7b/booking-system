@@ -16,11 +16,12 @@ class ServicePolicy
     {
         $business = Filament::getTenant();
 
-        return $business instanceof Business
-            && (
-                $this->access->canManageOperations($user, $business)
-                || $this->access->services($user, $business)->exists()
-            );
+        if (! $business instanceof Business) {
+            return false;
+        }
+
+        return $this->access->canManageOperations($user, $business)
+            || $this->access->services($user, $business)->exists();
     }
 
     public function view(User $user, Service $service): bool

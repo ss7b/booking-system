@@ -3,6 +3,7 @@
 namespace App\Filament\Resources;
 
 use App\Domain\Authorization\BusinessAccess;
+use App\Domain\Authorization\BusinessMembershipRequestContext;
 use App\Models\AvailabilityCalendar;
 use App\Models\Booking;
 use App\Models\Business;
@@ -31,6 +32,8 @@ abstract class TenantResource extends Resource
 
         $access = app(BusinessAccess::class);
         $model = static::getModel();
+
+        BusinessMembershipRequestContext::beginForModel($model, $user, $tenant);
 
         if ($model === Booking::class) {
             return $access->bookings($user, $tenant);

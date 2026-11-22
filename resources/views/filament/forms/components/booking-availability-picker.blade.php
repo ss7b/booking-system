@@ -71,7 +71,7 @@
 
             if ($location && $service) {
                 if ($staffId && ! $staff) {
-                    $calendarError = 'The selected staff member is no longer available for this service.';
+                    $calendarError = __('bookings.picker.staff_unavailable');
                 } else {
                     $assignment = ServiceLocation::query()
                         ->where('service_id', $serviceId)
@@ -103,23 +103,24 @@
                 }
             }
         } catch (\Throwable $exception) {
-            $calendarError = 'Availability could not be loaded for this date range.';
+            $calendarError = __('bookings.picker.load_error');
         }
     }
 
-    $slotGroups = ['Morning' => [], 'Evening' => []];
+    $morningLabel = __('bookings.picker.morning');
+    $eveningLabel = __('bookings.picker.evening');
+    $slotGroups = [$morningLabel => [], $eveningLabel => []];
     foreach ($selectedDaySlots as $slot) {
         $slotStart = CarbonImmutable::parse($slot['start'], $timezone);
-        $slotLabel = $slotStart->setTimezone($timezone)->format('g:i A');
+        $slotLabel = $slotStart->setTimezone($timezone)->translatedFormat('g:i A');
+        $periodLabel = $slotStart->hour < 12 ? $morningLabel : $eveningLabel;
 
-        if ($slotStart->hour < 12) {
-            $slotGroups['Morning'][] = ['start' => $slot['start'], 'label' => $slotLabel];
-        } else {
-            $slotGroups['Evening'][] = ['start' => $slot['start'], 'label' => $slotLabel];
-        }
+        $slotGroups[$periodLabel][] = ['start' => $slot['start'], 'label' => $slotLabel];
     }
 
-    $weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    $weekdays = collect(range(0, 6))
+        ->map(fn (int $offset): string => CarbonImmutable::now($timezone)->startOfWeek(0)->addDays($offset)->translatedFormat('D'))
+        ->all();
 @endphp
 
 <x-dynamic-component
@@ -129,7 +130,7 @@
     <div class="space-y-4">
         @if (! $locationId || ! $serviceId)
             <div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm text-gray-600">
-                Select a location and service to load the appointment calendar.
+                {{ __('bookings.picker.select_location_service') }}
             </div>
         @else
             @if ($calendarError)
@@ -146,17 +147,17 @@
                         class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700"
                         @disabled($previousWeekStart->addDays(6)->endOfDay()->isBefore(CarbonImmutable::now($timezone)))
                     >
-                        Previous week
+                        {{ __('bookings.picker.previous_week') }}
                     </button>
                     <div class="text-base font-semibold text-gray-900">
-                        {{ $startOfGrid->translatedFormat('M j') }} to {{ $endOfGrid->translatedFormat('M j, Y') }}
+                        {{ $startOfGrid->translatedFormat('M j') }} {{ __('bookings.picker.date_range_separator') }} {{ $endOfGrid->translatedFormat('M j, Y') }}
                     </div>
                     <button
                         type="button"
                         x-on:click="$wire.set('{{ $calendarWeekStartPath }}', '{{ $nextWeekStart->format('Y-m-d') }}'); $wire.set('{{ $selectedDatePath }}', null); $wire.set('{{ $statePath }}', null)"
                         class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700"
                     >
-                        Next week
+                        {{ __('bookings.picker.next_week') }}
                     </button>
                 </div>
 
@@ -192,18 +193,18 @@
                         >
                             <span class="font-semibold">{{ $day->translatedFormat('D j') }}</span>
                             @if ($isAvailable && ! $isPast)
-                                <span class="text-[10px]">Open</span>
+                                <span class="text-[10px]">{{ __('bookings.picker.open') }}</span>
                             @elseif (! $isAvailable && ! $isPast)
-                                <span class="text-[10px]">Closed</span>
+                                <span class="text-[10px]">{{ __('bookings.picker.closed') }}</span>
                             @endif
                         </button>
                     @endforeach
                 </div>
 
                 <div class="mt-4 flex flex-wrap gap-3 text-xs text-gray-600">
-                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-green-500"></span>Available</span>
-                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-red-500"></span>Unavailable</span>
-                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-primary-500"></span>Selected</span>
+                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-green-500"></span>{{ __('bookings.picker.available') }}</span>
+                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-red-500"></span>{{ __('bookings.picker.unavailable') }}</span>
+                    <span class="inline-flex items-center gap-2"><span class="h-3 w-3 rounded-full bg-primary-500"></span>{{ __('bookings.picker.selected') }}</span>
                 </div>
             </div>
 
@@ -218,7 +219,7 @@
                             <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{{ $label }}</div>
 
                             @if ($slots === [])
-                                <div class="text-sm text-gray-500">No {{ strtolower($label) }} slots available.</div>
+                                <div class="text-sm text-gray-500">{{ __('bookings.picker.no_slots', ['period' => $label]) }}</div>
                             @else
                                 <div class="flex flex-wrap gap-2">
                                     @foreach ($slots as $slot)

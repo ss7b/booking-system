@@ -51,7 +51,7 @@ class CustomerResource extends TenantResource
                     ->before(fn (Customer $record) => abort_unless(
                         ! $record->bookings()->exists(),
                         422,
-                        'This customer has bookings and cannot be deleted.',
+                        __('messages.customer_has_bookings'),
                     )),
             ]);
     }

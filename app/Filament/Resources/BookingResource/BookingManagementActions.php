@@ -69,7 +69,7 @@ final class BookingManagementActions
                     $record,
                     BookingStatus::Confirmed,
                     'confirm',
-                    'Booking confirmed',
+                    __('messages.booking_confirmed'),
                 )),
             $make('cancel')
                 ->color('danger')
@@ -80,7 +80,7 @@ final class BookingManagementActions
                     $record,
                     BookingStatus::Cancelled,
                     'cancel',
-                    'Booking cancelled',
+                    __('messages.booking_cancelled'),
                     $data['reason'] ?? null,
                 )),
             $make('check_in')
@@ -89,7 +89,7 @@ final class BookingManagementActions
                     $record,
                     BookingStatus::CheckedIn,
                     'update',
-                    'Booking checked in',
+                    __('messages.booking_checked_in'),
                 )),
             $make('complete')
                 ->visible(fn (Booking $record): bool => $record->status === BookingStatus::CheckedIn && $allows('update', $record))
@@ -97,7 +97,7 @@ final class BookingManagementActions
                     $record,
                     BookingStatus::Completed,
                     'update',
-                    'Booking completed',
+                    __('messages.booking_completed'),
                 )),
             $make('no_show')
                 ->color('warning')
@@ -107,10 +107,10 @@ final class BookingManagementActions
                     $record,
                     BookingStatus::NoShow,
                     'update',
-                    'Booking marked as no-show',
+                    __('messages.booking_no_show'),
                 )),
             $make('reschedule')
-                ->label('Reschedule')
+                ->label(__('actions.reschedule'))
                 ->icon('heroicon-o-calendar')
                 ->visible(fn (Booking $record): bool => in_array($record->status, [BookingStatus::Held, BookingStatus::Confirmed], true)
                     && $allows('reschedule', $record))
@@ -232,7 +232,7 @@ final class BookingManagementActions
                 (string) Filament::auth()->id(),
             );
         } catch (DomainException $exception) {
-            self::notifyFailure('Booking was not updated', $exception);
+            self::notifyFailure(__('messages.booking_was_not_updated'), $exception);
         }
 
         Notification::make()->title($successTitle)->body($updated->reference)->success()->send();
@@ -272,21 +272,21 @@ final class BookingManagementActions
                 $data['reason'] ?? null,
             );
         } catch (DomainException $exception) {
-            self::notifyFailure('Booking was not rescheduled', $exception);
+            self::notifyFailure(__('messages.booking_was_not_rescheduled'), $exception);
         }
 
-        Notification::make()->title('Booking rescheduled')->body($updated->reference)->success()->send();
+        Notification::make()->title(__('messages.booking_rescheduled'))->body($updated->reference)->success()->send();
     }
 
     private static function notifyFailure(string $title, DomainException $exception): never
     {
         $message = match ($exception->getMessage()) {
-            'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
-            'CUSTOMER_SERVICE_DAILY_LIMIT' => 'The customer already has an active booking for this service on this date.',
-            'SLOT_UNAVAILABLE' => 'The selected time is no longer available.',
-            'BOOKING_EXPIRED' => 'This booking hold has expired.',
-            'BOOKING_CHANGED_RETRY' => 'The booking changed while the action was processing. Refresh and try again.',
-            'INVALID_BOOKING_TRANSITION' => 'The booking status no longer allows this action.',
+            'CUSTOMER_BOOKING_OVERLAP' => __('messages.customer_booking_overlap'),
+            'CUSTOMER_SERVICE_DAILY_LIMIT' => __('messages.customer_daily_limit'),
+            'SLOT_UNAVAILABLE' => __('messages.slot_unavailable'),
+            'BOOKING_EXPIRED' => __('messages.booking_expired'),
+            'BOOKING_CHANGED_RETRY' => __('messages.booking_changed_retry'),
+            'INVALID_BOOKING_TRANSITION' => __('messages.invalid_booking_transition'),
             default => $exception->getMessage(),
         };
 

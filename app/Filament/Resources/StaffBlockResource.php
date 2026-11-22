@@ -27,8 +27,12 @@ class StaffBlockResource extends TenantResource
                 Forms\Components\DateTimePicker::make('starts_at')->required(),
                 Forms\Components\DateTimePicker::make('ends_at')->after('starts_at')->required(),
                 Forms\Components\Select::make('type')->options([
-                    'leave' => 'Leave', 'maintenance' => 'Maintenance', 'external_busy' => 'External busy',
-                    'manual' => 'Manual', 'emergency' => 'Emergency', 'break' => 'Break',
+                    'leave' => __('calendars.block_types.leave'),
+                    'maintenance' => __('calendars.block_types.maintenance'),
+                    'external_busy' => __('calendars.block_types.external_busy'),
+                    'manual' => __('calendars.block_types.manual'),
+                    'emergency' => __('calendars.block_types.emergency'),
+                    'break' => __('calendars.block_types.break'),
                 ])->required(),
                 Forms\Components\TextInput::make('reason')->maxLength(255)->nullable(),
             ]);
@@ -41,12 +45,18 @@ class StaffBlockResource extends TenantResource
                 Tables\Columns\TextColumn::make('staff.name')->label('Staff')->sortable(),
                 Tables\Columns\TextColumn::make('starts_at')->dateTime()->sortable(),
                 Tables\Columns\TextColumn::make('ends_at')->dateTime(),
-                Tables\Columns\TextColumn::make('type')->badge(),
+                Tables\Columns\TextColumn::make('type')
+                    ->badge()
+                    ->formatStateUsing(fn (string $state): string => __('calendars.block_types.'.$state)),
                 Tables\Columns\TextColumn::make('reason')->limit(40),
             ])
             ->filters([Tables\Filters\SelectFilter::make('type')->options([
-                'leave' => 'Leave', 'maintenance' => 'Maintenance', 'external_busy' => 'External busy',
-                'manual' => 'Manual', 'emergency' => 'Emergency', 'break' => 'Break',
+                'leave' => __('calendars.block_types.leave'),
+                'maintenance' => __('calendars.block_types.maintenance'),
+                'external_busy' => __('calendars.block_types.external_busy'),
+                'manual' => __('calendars.block_types.manual'),
+                'emergency' => __('calendars.block_types.emergency'),
+                'break' => __('calendars.block_types.break'),
             ])])
             ->actions([
                 Tables\Actions\EditAction::make(),

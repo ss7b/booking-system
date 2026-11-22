@@ -1,8 +1,8 @@
 <div wire:poll.5s.visible="poll" class="flex items-center">
     <a
         href="{{ $this->notificationCenterUrl() }}"
-        aria-label="Notifications{{ $unreadCount > 0 ? ', '.$unreadCount.' unread' : '' }}"
-        title="Notifications"
+        aria-label="{{ __('notifications.indicator', ['count' => $unreadCount]) }}"
+        title="{{ __('notifications.title') }}"
         class="relative inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 hover:text-gray-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-white"
     >
         <x-filament::icon icon="heroicon-o-bell" class="h-8 w-8" />
@@ -11,6 +11,6 @@
                 {{ $unreadCount > 99 ? '99+' : $unreadCount }}
             </span>
         @endif
-        <span class="sr-only">Open notification center</span>
+        <span class="sr-only">{{ __('notifications.open_center') }}</span>
     </a>
 </div>

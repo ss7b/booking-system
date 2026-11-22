@@ -28,6 +28,7 @@ use DateTimeZone;
 use DomainException;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
@@ -599,6 +600,33 @@ class StafflessBookingTest extends TestCase
             ->set('mountedTableActionsData.0.selected_date', $fixture['date'])
             ->assertSet('mountedTableActionsData.0.starts_at', null)
             ->assertSee('8:00 AM');
+
+        $previousLocale = App::getLocale();
+        $previousCarbonLocale = Carbon::getLocale();
+
+        try {
+            App::setLocale('ar');
+            Carbon::setLocale('ar');
+
+            Livewire::test(ListBookings::class)
+                ->mountTableAction('create_booking')
+                ->setTableActionData([
+                    'location_id' => $fixture['location']->getKey(),
+                    'service_id' => $fixture['service']->getKey(),
+                    'starts_at' => null,
+                ])
+                ->set(
+                    'mountedTableActionsData.0.calendar_week_start',
+                    Carbon::parse($fixture['date'])->startOfWeek(Carbon::SUNDAY)->toDateString(),
+                )
+                ->set('mountedTableActionsData.0.selected_date', $fixture['date'])
+                ->assertSee('صباحًا')
+                ->assertSee('8:00')
+                ->assertSee('إلى');
+        } finally {
+            App::setLocale($previousLocale);
+            Carbon::setLocale($previousCarbonLocale);
+        }
     }
 
     public function test_filament_can_create_a_staff_required_booking_from_the_availability_picker(): void

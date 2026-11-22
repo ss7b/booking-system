@@ -47,7 +47,7 @@ class AvailabilityCalendarResource extends TenantResource
                     ->before(fn (AvailabilityCalendar $record) => abort_unless(
                         ! $record->rules()->exists() && ! $record->overrides()->exists(),
                         422,
-                        'This availability calendar has rules or overrides and cannot be deleted.',
+                        __('messages.calendar_has_rules'),
                     )),
             ]);
     }

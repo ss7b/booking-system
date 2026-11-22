@@ -7,13 +7,13 @@
     <div class="space-y-4">
         <x-filament-panels::resources.tabs />
 
-        <div class="flex flex-col gap-2 sm:flex-row" role="group" aria-label="Booking view">
+        <div class="flex flex-col gap-2 sm:flex-row" role="group" aria-label="{{ __('bookings.calendar.view') }}">
             <x-filament::button
                 wire:click="setDisplayMode('table')"
                 :color="$displayMode === 'table' ? 'primary' : 'gray'"
                 aria-pressed="{{ $displayMode === 'table' ? 'true' : 'false' }}"
             >
-                Table
+                {{ __('bookings.calendar.table_view') }}
             </x-filament::button>
 
             <x-filament::button
@@ -21,7 +21,7 @@
                 :color="$displayMode === 'calendar' ? 'primary' : 'gray'"
                 aria-pressed="{{ $displayMode === 'calendar' ? 'true' : 'false' }}"
             >
-                Calendar
+                {{ __('bookings.calendar.calendar_view') }}
             </x-filament::button>
         </div>
 

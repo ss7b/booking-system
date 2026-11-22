@@ -4,6 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Authorization\BusinessMembershipRequestContext;
+use App\Filament\Resources\Concerns\TranslatesResourceLabels;
 use App\Models\AvailabilityCalendar;
 use App\Models\Booking;
 use App\Models\Business;
@@ -18,6 +19,8 @@ use Illuminate\Database\Eloquent\Builder;
 
 abstract class TenantResource extends Resource
 {
+    use TranslatesResourceLabels;
+
     protected static ?string $tenantOwnershipRelationshipName = 'business';
 
     public static function getEloquentQuery(): Builder

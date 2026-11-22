@@ -21,7 +21,7 @@ class CustomerNotificationSettings extends Page
 
     protected static ?string $navigationGroup = 'Booking Management';
 
-    protected static ?string $navigationLabel = 'Customer notifications';
+    protected static ?string $navigationLabel = null;
 
     protected static ?string $slug = 'customer-notifications';
 
@@ -90,7 +90,17 @@ class CustomerNotificationSettings extends Page
 
     public function getTitle(): string
     {
-        return 'Customer notifications';
+        return __('notifications.customer_title');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('notifications.customer_title');
+    }
+
+    public static function getNavigationGroup(): ?string
+    {
+        return __('navigation.groups.booking_management');
     }
 
     public function save(CustomerNotificationService $notifications): void
@@ -182,7 +192,7 @@ class CustomerNotificationSettings extends Page
         $settingsModel->updated_by = Filament::auth()->id();
         $settingsModel->save();
 
-        Notification::make()->title('Customer notification settings saved')->success()->send();
+        Notification::make()->title(__('notifications.settings_saved'))->success()->send();
     }
 
     public function resend(string $notificationId, CustomerNotificationService $notifications): void
@@ -194,7 +204,7 @@ class CustomerNotificationSettings extends Page
             ->firstOrFail();
         $notifications->resend($notification, Filament::auth()->user());
 
-        Notification::make()->title('Customer notification queued for resend')->success()->send();
+        Notification::make()->title(__('notifications.resend_queued'))->success()->send();
     }
 
     protected function getViewData(): array
@@ -214,7 +224,7 @@ class CustomerNotificationSettings extends Page
         $warnings = [];
         foreach (CustomerNotificationService::CHANNELS as $channel) {
             if (($settings['channels'][$channel]['enabled'] ?? false) && ! $this->isConfigured($channel, $settings['channels'][$channel]['credentials'] ?? [])) {
-                $warnings[$channel] = 'This channel is enabled but has no usable provider configuration.';
+                $warnings[$channel] = __('notifications.enabled_unconfigured');
             }
         }
 

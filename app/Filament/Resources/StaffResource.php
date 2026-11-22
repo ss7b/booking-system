@@ -45,7 +45,11 @@ class StaffResource extends TenantResource
                             : [];
                     })
                     ->searchable()->preload()->nullable(),
-                Forms\Components\Select::make('status')->options(['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'])->required()->default('active'),
+                Forms\Components\Select::make('status')->options([
+                    'active' => __('Active'),
+                    'inactive' => __('Inactive'),
+                    'archived' => __('Archived'),
+                ])->required()->default('active'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
                     ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
@@ -67,9 +71,15 @@ class StaffResource extends TenantResource
                 Tables\Columns\TextColumn::make('email')->searchable(),
                 Tables\Columns\TextColumn::make('phone'),
                 Tables\Columns\TextColumn::make('services.name')->label('Services')->listWithLineBreaks(),
-                Tables\Columns\TextColumn::make('status')->badge(),
+                Tables\Columns\TextColumn::make('status')
+                    ->badge()
+                    ->formatStateUsing(fn (string $state): string => __('staff.statuses.'.$state)),
             ])
-            ->filters([Tables\Filters\SelectFilter::make('status')->options(['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'])])
+            ->filters([Tables\Filters\SelectFilter::make('status')->options([
+                'active' => __('Active'),
+                'inactive' => __('Inactive'),
+                'archived' => __('Archived'),
+            ])])
             ->actions([
                 Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
                 Tables\Actions\DeleteAction::make()
@@ -78,7 +88,7 @@ class StaffResource extends TenantResource
                     ->before(fn (Staff $record) => abort_unless(
                         ! $record->bookings()->exists() && ! $record->blocks()->exists(),
                         422,
-                        'This staff member has bookings or blocks and cannot be deleted.',
+                        __('messages.staff_has_bookings'),
                     )),
             ]);
     }

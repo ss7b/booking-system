@@ -23,7 +23,7 @@ class NotificationCenter extends Page
 
     protected static ?string $navigationGroup = 'Booking Management';
 
-    protected static ?string $navigationLabel = 'Notifications';
+    protected static ?string $navigationLabel = null;
 
     protected static ?string $slug = 'notifications';
 
@@ -59,7 +59,17 @@ class NotificationCenter extends Page
 
     public function getTitle(): string
     {
-        return 'Notifications';
+        return __('notifications.title');
+    }
+
+    public static function getNavigationLabel(): string
+    {
+        return __('notifications.title');
+    }
+
+    public static function getNavigationGroup(): ?string
+    {
+        return __('navigation.groups.booking_management');
     }
 
     public function refreshInbox(): void
@@ -100,10 +110,10 @@ class NotificationCenter extends Page
 
         try {
             app(NotificationManager::class)->savePreferences(Filament::auth()->user(), $this->business(), $preferences);
-            Notification::make()->title('Notification preferences saved')->success()->send();
+            Notification::make()->title(__('notifications.preferences_saved'))->success()->send();
         } catch (ValidationException $exception) {
             Notification::make()
-                ->title('Could not save notification preferences')
+                ->title(__('notifications.preferences_failed'))
                 ->body(collect($exception->errors())->flatten()->first())
                 ->danger()
                 ->send();
@@ -140,10 +150,10 @@ class NotificationCenter extends Page
             ])->validate();
 
             app(NotificationManager::class)->saveBusinessSettings($business, $rules);
-            Notification::make()->title('Business notification rules saved')->success()->send();
+            Notification::make()->title(__('notifications.business_rules_saved'))->success()->send();
         } catch (ValidationException $exception) {
             Notification::make()
-                ->title('Could not save business notification rules')
+                ->title(__('notifications.business_rules_failed'))
                 ->body(collect($exception->errors())->flatten()->first())
                 ->danger()
                 ->send();

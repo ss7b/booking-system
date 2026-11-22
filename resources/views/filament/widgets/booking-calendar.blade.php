@@ -59,15 +59,15 @@
 
     <x-filament::section>
         <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">
-            All booking times are shown in the business timezone: {{ $this->timezoneLabel() }}. Individual branch timezones may differ.
+            {{ __('bookings.calendar.timezone_notice', ['timezone' => $this->timezoneLabel()]) }}
         </p>
 
         <div class="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <label class="text-sm font-medium">
-                <span>Location</span>
+                <span>{{ __('bookings.calendar.location') }}</span>
                 <x-filament::input.wrapper class="mt-1">
                     <x-filament::input.select wire:model.live="filters.location_id">
-                        <option value="">All locations</option>
+                        <option value="">{{ __('bookings.calendar.all_locations') }}</option>
                         @foreach ($this->locationOptions() as $id => $name)
                             <option value="{{ $id }}">{{ $name }}</option>
                         @endforeach
@@ -76,10 +76,10 @@
             </label>
 
             <label class="text-sm font-medium">
-                <span>Service</span>
+                <span>{{ __('bookings.calendar.service') }}</span>
                 <x-filament::input.wrapper class="mt-1">
                     <x-filament::input.select wire:model.live="filters.service_id">
-                        <option value="">All services</option>
+                        <option value="">{{ __('bookings.calendar.all_services') }}</option>
                         @foreach ($this->serviceOptions() as $id => $name)
                             <option value="{{ $id }}">{{ $name }}</option>
                         @endforeach
@@ -88,11 +88,11 @@
             </label>
 
             <label class="text-sm font-medium">
-                <span>Staff</span>
+                <span>{{ __('bookings.calendar.staff') }}</span>
                 <x-filament::input.wrapper class="mt-1">
                     <x-filament::input.select wire:model.live="filters.staff_id">
-                        <option value="">All staff, including Staffless</option>
-                        <option value="none">Staffless only</option>
+                        <option value="">{{ __('bookings.calendar.all_staff') }}</option>
+                        <option value="none">{{ __('bookings.calendar.staffless_only') }}</option>
                         @foreach ($this->staffOptions() as $id => $name)
                             <option value="{{ $id }}">{{ $name }}</option>
                         @endforeach
@@ -101,10 +101,10 @@
             </label>
 
             <label class="text-sm font-medium">
-                <span>Status</span>
+                <span>{{ __('bookings.calendar.status') }}</span>
                 <x-filament::input.wrapper class="mt-1">
                     <x-filament::input.select wire:model.live="filters.status">
-                        <option value="">All statuses</option>
+                        <option value="">{{ __('bookings.calendar.all_statuses') }}</option>
                         @foreach ($this->statusOptions() as $value => $label)
                             <option value="{{ $value }}">{{ $label }}</option>
                         @endforeach
@@ -117,7 +117,7 @@
             x-load-src="{{ \Filament\Support\Facades\FilamentAsset::getAlpineComponentSrc('filament-fullcalendar-alpine', 'saade/filament-fullcalendar') }}"
             ax-load-css="{{ \Filament\Support\Facades\FilamentAsset::getStyleHref('filament-fullcalendar-styles', 'saade/filament-fullcalendar') }}"
             x-ignore x-data="fullcalendar({
-                locale: @js($plugin->getLocale()),
+                locale: @js(app()->getLocale()),
                 plugins: @js($plugin->getPlugins()),
                 timeZone: @js($plugin->getTimezone()),
                 config: @js($this->getConfig()),

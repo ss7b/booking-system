@@ -46,14 +46,14 @@ class ServiceResource extends TenantResource
                             ->integer()
                             ->minValue(0)
                             ->nullable()
-                            ->helperText('0 prevents bookings on future days. A positive value sets the maximum advance period in days. Leave empty for no limit.'),
+                            ->helperText(__('services.advance_limit')),
                         Forms\Components\TextInput::make('price_minor')->numeric()->integer()->minValue(0)->nullable(),
                         Forms\Components\TextInput::make('currency')->length(3)->default('SAR')->nullable(),
                         Forms\Components\Toggle::make('is_active')->default(true),
                     ])
                     ->columns(2),
-                Forms\Components\Section::make('Booking settings per location')
-                    ->description('Configure how this service is booked in each location.')
+                Forms\Components\Section::make(__('services.booking_settings'))
+                    ->description(__('services.booking_settings_help'))
                     ->schema([
                         Forms\Components\Repeater::make('location_settings')
                             ->label('Locations')
@@ -67,12 +67,12 @@ class ServiceResource extends TenantResource
                                 Forms\Components\Radio::make('booking_mode')
                                     ->label('Booking mode')
                                     ->options([
-                                        BookingMode::StaffRequired->value => 'Requires staff',
-                                        BookingMode::Staffless->value => 'No staff required',
+                                        BookingMode::StaffRequired->value => __('bookings.mode.staff_required'),
+                                        BookingMode::Staffless->value => __('bookings.mode.staffless'),
                                     ])
                                     ->descriptions([
-                                        BookingMode::StaffRequired->value => 'Customers choose an available staff member when booking.',
-                                        BookingMode::Staffless->value => 'Bookings use the location calendar and service capacity.',
+                                        BookingMode::StaffRequired->value => __('services.staff_required_description'),
+                                        BookingMode::Staffless->value => __('services.staffless_description'),
                                     ])
                                     ->default(BookingMode::StaffRequired->value)
                                     ->live()
@@ -84,17 +84,17 @@ class ServiceResource extends TenantResource
                                     ->default(1)
                                     ->required(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value)
                                     ->dehydratedWhenHidden()
-                                    ->helperText('Maximum number of overlapping bookings for this service at this location.')
+                                    ->helperText(__('services.capacity_help'))
                                     ->visible(fn (Get $get): bool => $get('booking_mode') === BookingMode::Staffless->value),
                                 Forms\Components\Placeholder::make('availability_warning')
                                     ->label('Availability calendar')
-                                    ->content('This location has no availability calendar. Customers will not see bookable dates until a calendar is configured.')
+                                    ->content(__('services.calendar_warning'))
                                     ->visible(fn (Get $get): bool => self::locationHasNoCalendar($get('location_id'))
                                         && $get('booking_mode') === BookingMode::Staffless->value),
                             ])
                             ->defaultItems(1)
                             ->minItems(1)
-                            ->addActionLabel('Add location')
+                            ->addActionLabel(__('services.add_location'))
                             ->required()
                             ->columnSpanFull(),
                     ]),
@@ -170,7 +170,7 @@ class ServiceResource extends TenantResource
                     ->before(fn (Service $record) => abort_unless(
                         ! $record->bookings()->exists(),
                         422,
-                        'This service has bookings and cannot be deleted.',
+                        __('messages.service_has_bookings'),
                     )),
             ]);
     }
@@ -226,7 +226,7 @@ class ServiceResource extends TenantResource
 
         if (in_array('', $locationIds, true) || $authorizedCount !== count($locationIds)) {
             throw ValidationException::withMessages([
-                'location_settings' => 'Choose only locations you are authorized to manage in this business.',
+                'location_settings' => __('messages.locations_unauthorized'),
             ]);
         }
 
@@ -235,12 +235,12 @@ class ServiceResource extends TenantResource
                 ->executeManyWithinTransaction($business, $service, $settings);
         } catch (DomainException $exception) {
             $message = match ($exception->getMessage()) {
-                'BOOKING_MODE_CHANGE_BLOCKED' => 'Booking mode cannot change while active future bookings or holds exist.',
-                'CAPACITY_BELOW_CURRENT_OCCUPANCY' => 'Capacity cannot be lower than current future peak occupancy.',
-                'CAPACITY_MUST_BE_POSITIVE' => 'Capacity must be at least one.',
-                'LOCATION_REMOVAL_BLOCKED' => 'A location cannot be removed while it has active future bookings or holds.',
-                'DUPLICATE_SERVICE_LOCATION' => 'Choose each location only once.',
-                default => 'The booking settings could not be saved. Check the selected locations and try again.',
+                'BOOKING_MODE_CHANGE_BLOCKED' => __('messages.booking_mode_change_blocked'),
+                'CAPACITY_BELOW_CURRENT_OCCUPANCY' => __('messages.capacity_below_occupancy'),
+                'CAPACITY_MUST_BE_POSITIVE' => __('messages.capacity_positive'),
+                'LOCATION_REMOVAL_BLOCKED' => __('messages.location_removal_blocked'),
+                'DUPLICATE_SERVICE_LOCATION' => __('messages.duplicate_location'),
+                default => __('messages.booking_settings_failed'),
             };
 
             throw ValidationException::withMessages(['location_settings' => $message]);

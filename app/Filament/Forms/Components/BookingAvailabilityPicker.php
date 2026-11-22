@@ -12,7 +12,7 @@ class BookingAvailabilityPicker extends Field
     {
         parent::setUp();
 
-        $this->label('Availability')
-            ->helperText('Choose a date and time using the live availability calendar.');
+        $this->label(__('bookings.picker.availability'))
+            ->helperText(__('bookings.picker.helper'));
     }
 }

@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Authorization\BusinessMembershipRequestContext;
 use App\Filament\Resources\CalendarRuleResource\Pages\ManageCalendarRules;
+use App\Filament\Resources\Concerns\TranslatesResourceLabels;
 use App\Models\CalendarRule;
 use Filament\Facades\Filament;
 use Filament\Forms;
@@ -18,6 +19,8 @@ use Illuminate\Validation\Rules\Unique;
 
 class CalendarRuleResource extends Resource
 {
+    use TranslatesResourceLabels;
+
     protected static ?string $model = CalendarRule::class;
 
     protected static bool $isScopedToTenant = false;
@@ -46,8 +49,13 @@ class CalendarRuleResource extends Resource
                     ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
                     ->searchable()->required(),
                 Forms\Components\Select::make('day_of_week')->options([
-                    0 => 'Sunday', 1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday',
-                    4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday',
+                    0 => __('calendars.weekdays.sunday'),
+                    1 => __('calendars.weekdays.monday'),
+                    2 => __('calendars.weekdays.tuesday'),
+                    3 => __('calendars.weekdays.wednesday'),
+                    4 => __('calendars.weekdays.thursday'),
+                    5 => __('calendars.weekdays.friday'),
+                    6 => __('calendars.weekdays.saturday'),
                 ])->required(),
                 Forms\Components\TimePicker::make('start_time')
                     ->seconds(false)
@@ -59,7 +67,7 @@ class CalendarRuleResource extends Resource
                             ->where('day_of_week', $get('day_of_week'))
                             ->where('end_time', $get('end_time')),
                     )
-                    ->validationMessages(['unique' => 'This exact calendar rule already exists.']),
+                    ->validationMessages(['unique' => __('messages.calendar_rule_exists')]),
                 Forms\Components\TimePicker::make('end_time')->seconds(false)->after('start_time')->required(),
             ]);
     }
@@ -69,7 +77,15 @@ class CalendarRuleResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('calendar.name')->label('Calendar')->sortable(),
-                Tables\Columns\TextColumn::make('day_of_week')->formatStateUsing(fn (int $state): string => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][$state] ?? 'Unknown')->sortable(),
+                Tables\Columns\TextColumn::make('day_of_week')->formatStateUsing(fn (int $state): string => [
+                    __('calendars.weekdays.sunday'),
+                    __('calendars.weekdays.monday'),
+                    __('calendars.weekdays.tuesday'),
+                    __('calendars.weekdays.wednesday'),
+                    __('calendars.weekdays.thursday'),
+                    __('calendars.weekdays.friday'),
+                    __('calendars.weekdays.saturday'),
+                ][$state] ?? __('calendars.weekdays.unknown'))->sortable(),
                 Tables\Columns\TextColumn::make('start_time')->time('H:i'),
                 Tables\Columns\TextColumn::make('end_time')->time('H:i'),
             ])

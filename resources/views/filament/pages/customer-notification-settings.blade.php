@@ -3,13 +3,13 @@
         <section class="space-y-4">
             <div class="flex flex-wrap items-end justify-between gap-2">
                 <div>
-                    <h2 class="text-lg font-semibold">Provider connections</h2>
-                    <p class="text-sm text-gray-500">Credentials are encrypted at rest. A saved credential does not imply successful message delivery.</p>
+                    <h2 class="text-lg font-semibold">{{ __('notifications.settings.provider_connections') }}</h2>
+                    <p class="text-sm text-gray-500">{{ __('notifications.settings.credentials_note') }}</p>
                 </div>
             </div>
 
             <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                @foreach (['email' => 'Email via SMTP', 'sms' => 'SMS via Twilio', 'whatsapp' => 'WhatsApp via Twilio'] as $channel => $label)
+                @foreach (['email' => __('notifications.settings.email_smtp'), 'sms' => __('notifications.settings.sms_twilio'), 'whatsapp' => __('notifications.settings.whatsapp_twilio')] as $channel => $label)
                     @php($status = $channelStatuses[$channel] ?? 'unverified')
                     @php($statusClasses = match ($status) {
                         'verified' => 'bg-success-50 text-success-700 ring-success-600/20 dark:bg-success-400/10 dark:text-success-400',
@@ -30,13 +30,13 @@
                             <div class="min-w-0 flex-1">
                                 <h3 class="font-semibold">{{ $label }}</h3>
                                 <span @class(['mt-1 inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset', $statusClasses])>
-                                    {{ str($status)->replace('_', ' ')->headline() }}
+                                    {{ __('notifications.provider_statuses.'.$status) }}
                                 </span>
                             </div>
                             <label class="inline-flex shrink-0 items-center gap-2 text-sm">
-                                <span class="sr-only">Enable {{ $label }}</span>
+                                <span class="sr-only">{{ __('notifications.settings.enable_channel', ['channel' => $label]) }}</span>
                                 <input type="checkbox" wire:model="channels.{{ $channel }}" class="rounded border-gray-300 text-primary-600 shadow-sm focus:ring-primary-600">
-                                <span>Enabled</span>
+                                <span>{{ __('notifications.ui.enabled') }}</span>
                             </label>
                         </header>
 
@@ -46,64 +46,64 @@
 
                         <details class="group rounded-lg border border-gray-200 dark:border-gray-700" @if (! ($channelConfigured[$channel] ?? false)) open @endif>
                             <summary class="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600">
-                                <span>Connection settings</span>
+                                <span>{{ __('notifications.settings.connection_settings') }}</span>
                                 <x-filament::icon icon="heroicon-o-chevron-down" class="h-4 w-4 text-gray-500 transition group-open:rotate-180" />
                             </summary>
                             <div class="space-y-3 border-t border-gray-200 p-3 dark:border-gray-700">
                                 @if ($channel === 'email')
                                     <label class="block space-y-1 text-sm">
-                                        <span>SMTP host</span>
-                                        <x-filament::input.wrapper><x-filament::input type="text" wire:model="credentials.email.host" placeholder="smtp.example.com" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.smtp_host') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="text" dir="ltr" wire:model="credentials.email.host" placeholder="smtp.example.com" /></x-filament::input.wrapper>
                                         @error('credentials.email.host')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <div class="grid gap-3 sm:grid-cols-2">
                                         <label class="block space-y-1 text-sm">
-                                            <span>Port</span>
+                                            <span>{{ __('notifications.settings.port') }}</span>
                                             <x-filament::input.wrapper><x-filament::input type="number" wire:model="credentials.email.port" placeholder="587" /></x-filament::input.wrapper>
                                             @error('credentials.email.port')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                         </label>
                                         <label class="block space-y-1 text-sm">
-                                            <span>Encryption</span>
+                                            <span>{{ __('notifications.settings.encryption') }}</span>
                                             <select wire:model="credentials.email.encryption" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                                                <option value="starttls">STARTTLS</option><option value="ssl">SSL</option><option value="none">None</option>
+                                                <option value="starttls">STARTTLS</option><option value="ssl">SSL</option><option value="none">{{ __('notifications.settings.none') }}</option>
                                             </select>
                                             @error('credentials.email.encryption')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                         </label>
                                     </div>
                                     <label class="block space-y-1 text-sm">
-                                        <span>SMTP username</span>
-                                        <x-filament::input.wrapper><x-filament::input type="text" wire:model="credentials.email.username" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.smtp_username') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="text" dir="ltr" wire:model="credentials.email.username" /></x-filament::input.wrapper>
                                     </label>
                                     <label class="block space-y-1 text-sm">
-                                        <span>SMTP password</span>
-                                        <x-filament::input.wrapper><x-filament::input type="password" wire:model="credentials.email.password" placeholder="Leave blank to keep saved password" autocomplete="new-password" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.smtp_password') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.email.password" :placeholder="__('notifications.settings.keep_password')" autocomplete="new-password" /></x-filament::input.wrapper>
                                         @error('credentials.email.password')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <div class="grid gap-3 sm:grid-cols-2">
                                         <label class="block space-y-1 text-sm">
-                                            <span>Sender email</span>
-                                            <x-filament::input.wrapper><x-filament::input type="email" wire:model="credentials.email.from_address" /></x-filament::input.wrapper>
+                                            <span>{{ __('notifications.settings.sender_email') }}</span>
+                                            <x-filament::input.wrapper><x-filament::input type="email" dir="ltr" wire:model="credentials.email.from_address" /></x-filament::input.wrapper>
                                             @error('credentials.email.from_address')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                         </label>
                                         <label class="block space-y-1 text-sm">
-                                            <span>Sender name</span>
+                                            <span>{{ __('notifications.settings.sender_name') }}</span>
                                             <x-filament::input.wrapper><x-filament::input type="text" wire:model="credentials.email.from_name" /></x-filament::input.wrapper>
                                         </label>
                                     </div>
                                 @else
                                     <label class="block space-y-1 text-sm">
-                                        <span>Twilio Account SID</span>
-                                        <x-filament::input.wrapper><x-filament::input type="text" wire:model="credentials.{{ $channel }}.account_sid" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.account_sid') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="text" dir="ltr" wire:model="credentials.{{ $channel }}.account_sid" /></x-filament::input.wrapper>
                                         @error('credentials.'.$channel.'.account_sid')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <label class="block space-y-1 text-sm">
-                                        <span>Twilio Auth Token</span>
-                                        <x-filament::input.wrapper><x-filament::input type="password" wire:model="credentials.{{ $channel }}.auth_token" placeholder="Leave blank to keep saved token" autocomplete="new-password" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.auth_token') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.{{ $channel }}.auth_token" :placeholder="__('notifications.settings.keep_token')" autocomplete="new-password" /></x-filament::input.wrapper>
                                         @error('credentials.'.$channel.'.auth_token')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <label class="block space-y-1 text-sm">
-                                        <span>Sender number</span>
-                                        <x-filament::input.wrapper><x-filament::input type="text" wire:model="credentials.{{ $channel }}.from" placeholder="+15551234567" /></x-filament::input.wrapper>
+                                        <span>{{ __('notifications.settings.sender_number') }}</span>
+                                        <x-filament::input.wrapper><x-filament::input type="text" dir="ltr" wire:model="credentials.{{ $channel }}.from" placeholder="+15551234567" /></x-filament::input.wrapper>
                                         @error('credentials.'.$channel.'.from')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                 @endif
@@ -116,15 +116,16 @@
 
         <section class="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
             <div>
-                <h2 class="text-lg font-semibold">Notification events</h2>
-                <p class="text-sm text-gray-500">Choose the channel order to use when delivery falls back. SMS and WhatsApp recipients need E.164 numbers.</p>
+                <h2 class="text-lg font-semibold">{{ __('notifications.settings.events_title') }}</h2>
+                <p class="text-sm text-gray-500">{{ __('notifications.settings.fallback_help') }}</p>
             </div>
 
-            @foreach (['booking.created' => 'Booking confirmation', 'booking.reminder' => 'Appointment reminder', 'booking.rescheduled' => 'Booking rescheduled', 'booking.cancelled' => 'Booking cancelled'] as $event => $label)
+            @foreach (['booking.created', 'booking.reminder', 'booking.rescheduled', 'booking.cancelled'] as $event)
+                @php($label = __('notifications.events.'.str_replace('.', '_', $event)))
                 @php($formEvent = str_replace('.', '_', $event))
                 @php($configuredChannels = array_values(array_filter($rules[$formEvent]['channels'] ?? [])))
                 @php($channelLabels = ['email' => 'Email', 'sms' => 'SMS', 'whatsapp' => 'WhatsApp'])
-                @php($channelSummary = $configuredChannels === [] ? 'No channels selected' : implode(' → ', array_map(fn ($channel) => $channelLabels[$channel] ?? $channel, $configuredChannels)))
+                @php($channelSummary = $configuredChannels === [] ? __('notifications.settings.no_channels') : implode(' → ', array_map(fn ($channel) => $channelLabels[$channel] ?? $channel, $configuredChannels)))
                 <details class="group rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900" @if ($loop->first) open @endif>
                     <summary class="flex cursor-pointer list-none flex-wrap items-center gap-3 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600">
                         <x-filament::icon icon="heroicon-o-chevron-down" class="h-4 w-4 shrink-0 text-gray-500 transition group-open:rotate-180" />
@@ -134,19 +135,19 @@
                         </span>
                         <label class="inline-flex items-center gap-2 text-sm">
                             <input type="checkbox" wire:model="rules.{{ $formEvent }}.enabled" class="rounded border-gray-300 text-primary-600 shadow-sm focus:ring-primary-600">
-                            <span>Enabled</span>
+                            <span>{{ __('notifications.ui.enabled') }}</span>
                         </label>
                     </summary>
 
                     <div class="space-y-5 border-t border-gray-200 p-4 dark:border-gray-700">
                         <fieldset class="space-y-3">
-                            <legend class="text-sm font-semibold">Channel priority</legend>
+                            <legend class="text-sm font-semibold">{{ __('notifications.settings.channel_priority') }}</legend>
                             <div class="grid gap-3 md:grid-cols-3">
-                                @foreach (['Primary channel', 'Fallback channel 1', 'Fallback channel 2'] as $slot => $slotLabel)
+                                @foreach ([__('notifications.settings.primary_channel'), __('notifications.settings.fallback_channel', ['number' => 1]), __('notifications.settings.fallback_channel', ['number' => 2])] as $slot => $slotLabel)
                                     <label class="block space-y-1 text-sm">
                                         <span>{{ $slotLabel }}</span>
                                         <select wire:model="rules.{{ $formEvent }}.channels.{{ $slot }}" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                                            <option value="">Not selected</option>
+                                            <option value="">{{ __('notifications.settings.not_selected') }}</option>
                                             @foreach ($channelLabels as $channel => $channelLabel)
                                                 <option value="{{ $channel }}">{{ $channelLabel }}</option>
                                             @endforeach
@@ -160,14 +161,14 @@
 
                         @if ($event === 'booking.reminder')
                             <label class="block max-w-sm space-y-1 text-sm">
-                                <span>Reminder lead time (minutes)</span>
+                                <span>{{ __('notifications.settings.reminder_lead') }}</span>
                                 <x-filament::input.wrapper><x-filament::input type="number" min="1" max="525600" wire:model="rules.{{ $formEvent }}.lead_minutes" placeholder="1440" /></x-filament::input.wrapper>
                                 @error('rules.'.$formEvent.'.lead_minutes')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                             </label>
                         @endif
 
                         <div class="space-y-3">
-                            <h4 class="text-sm font-semibold">Message templates</h4>
+                            <h4 class="text-sm font-semibold">{{ __('notifications.settings.message_templates') }}</h4>
                             @foreach ($channelLabels as $channel => $channelLabel)
                                 <details class="group rounded-lg border border-gray-200 dark:border-gray-700">
                                     <summary class="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600">
@@ -175,33 +176,33 @@
                                         <span class="min-w-0 flex-1 font-medium">{{ $channelLabel }}</span>
                                         <label class="inline-flex items-center gap-2">
                                             <input type="checkbox" wire:model="templates.{{ $formEvent }}.{{ $channel }}.enabled" class="rounded border-gray-300 text-primary-600 shadow-sm focus:ring-primary-600">
-                                            <span class="text-xs">Enabled</span>
+                                            <span class="text-xs">{{ __('notifications.ui.enabled') }}</span>
                                         </label>
                                     </summary>
                                     @if ($templates[$formEvent][$channel]['enabled'] ?? false)
                                         <div class="space-y-3 border-t border-gray-200 p-3 dark:border-gray-700">
                                             @if ($channel === 'email')
                                                 <label class="block space-y-1 text-sm">
-                                                    <span>Email subject</span>
-                                                    <x-filament::input.wrapper><x-filament::input type="text" wire:model="templates.{{ $formEvent }}.{{ $channel }}.subject" placeholder="Subject" /></x-filament::input.wrapper>
+                                                    <span>{{ __('notifications.settings.email_subject') }}</span>
+                                                    <x-filament::input.wrapper><x-filament::input type="text" wire:model="templates.{{ $formEvent }}.{{ $channel }}.subject" :placeholder="__('notifications.settings.subject')" /></x-filament::input.wrapper>
                                                     @error('templates.'.$formEvent.'.'.$channel.'.subject')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                                 </label>
                                             @endif
                                             @if ($channel === 'whatsapp')
                                                 <label class="block space-y-1 text-sm">
-                                                    <span>Approved Twilio Content SID</span>
-                                                    <x-filament::input.wrapper><x-filament::input type="text" wire:model="templates.{{ $formEvent }}.{{ $channel }}.content_sid" placeholder="HX..." /></x-filament::input.wrapper>
+                                                    <span>{{ __('notifications.settings.approved_content_sid') }}</span>
+                                                    <x-filament::input.wrapper><x-filament::input type="text" dir="ltr" wire:model="templates.{{ $formEvent }}.{{ $channel }}.content_sid" placeholder="HX..." /></x-filament::input.wrapper>
                                                     @error('templates.'.$formEvent.'.'.$channel.'.content_sid')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                                 </label>
                                             @endif
                                             <label class="block space-y-1 text-sm">
-                                                <span>Message body</span>
-                                                <textarea wire:model="templates.{{ $formEvent }}.{{ $channel }}.body" rows="3" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950" placeholder="Message body"></textarea>
+                                                <span>{{ __('notifications.settings.message_body') }}</span>
+                                                <textarea wire:model="templates.{{ $formEvent }}.{{ $channel }}.body" rows="3" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950" :placeholder="__('notifications.settings.message_body')"></textarea>
                                                 @error('templates.'.$formEvent.'.'.$channel.'.body')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                             </label>
                                         </div>
                                     @else
-                                        <p class="border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-700">Template disabled. Saved content is retained.</p>
+                                        <p class="border-t border-gray-200 px-3 py-2 text-xs text-gray-500 dark:border-gray-700">{{ __('notifications.settings.template_disabled') }}</p>
                                     @endif
                                 </details>
                             @endforeach
@@ -213,8 +214,8 @@
 
         <div class="sticky bottom-0 z-10 -mx-4 flex justify-end border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-700 dark:bg-gray-950/95 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
             <x-filament::button type="submit" icon="heroicon-o-check" wire:target="save" wire:loading.attr="disabled">
-                <span wire:loading.remove wire:target="save">Save customer notification settings</span>
-                <span wire:loading wire:target="save">Saving...</span>
+                <span wire:loading.remove wire:target="save">{{ __('notifications.settings.save_settings') }}</span>
+                <span wire:loading wire:target="save">{{ __('notifications.ui.saving') }}</span>
             </x-filament::button>
         </div>
     </form>
@@ -222,22 +223,22 @@
     <section class="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
         <div class="flex flex-wrap items-end justify-between gap-3">
             <div>
-                <h2 class="text-lg font-semibold">Recent customer notifications</h2>
-                <p class="text-sm text-gray-500">Provider acceptance and customer delivery are separate states.</p>
+                <h2 class="text-lg font-semibold">{{ __('notifications.settings.recent') }}</h2>
+                <p class="text-sm text-gray-500">{{ __('notifications.settings.delivery_states') }}</p>
             </div>
             <div class="flex flex-wrap gap-2">
-                <label class="sr-only" for="notification-status-filter">Filter by status</label>
+                <label class="sr-only" for="notification-status-filter">{{ __('notifications.settings.filter_status') }}</label>
                 <select id="notification-status-filter" wire:model.live="historyStatus" class="rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                    <option value="">All statuses</option>
+                    <option value="">{{ __('notifications.settings.all_statuses') }}</option>
                     @foreach ($historyStatuses as $status)
-                        <option value="{{ $status }}">{{ str($status)->replace('_', ' ')->headline() }}</option>
+                        <option value="{{ $status }}">{{ __('notifications.provider_statuses.'.$status) }}</option>
                     @endforeach
                 </select>
-                <label class="sr-only" for="notification-event-filter">Filter by event</label>
+                <label class="sr-only" for="notification-event-filter">{{ __('notifications.settings.filter_event') }}</label>
                 <select id="notification-event-filter" wire:model.live="historyEvent" class="rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                    <option value="">All events</option>
+                    <option value="">{{ __('notifications.settings.all_events') }}</option>
                     @foreach ($historyEvents as $event)
-                        <option value="{{ $event }}">{{ str($event)->replace('.', ' ')->headline() }}</option>
+                        <option value="{{ $event }}">{{ __('notifications.events.'.str_replace('.', '_', $event)) }}</option>
                     @endforeach
                 </select>
             </div>
@@ -247,12 +248,12 @@
             <table class="w-full min-w-[52rem] divide-y divide-gray-200 text-start dark:divide-gray-700">
                 <thead class="bg-gray-50 text-xs font-medium uppercase text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     <tr>
-                        <th scope="col" class="px-4 py-3">Booking</th>
-                        <th scope="col" class="px-4 py-3">Customer</th>
-                        <th scope="col" class="px-4 py-3">Event</th>
-                        <th scope="col" class="px-4 py-3">Status</th>
-                        <th scope="col" class="px-4 py-3">Created</th>
-                        <th scope="col" class="px-4 py-3">Actions</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.booking') }}</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.customer') }}</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.event') }}</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.status') }}</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.created') }}</th>
+                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.actions') }}</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
@@ -265,38 +266,38 @@
                             default => 'bg-gray-100 text-gray-700 dark:bg-white/10 dark:text-gray-300',
                         })
                         <tr class="align-top">
-                            <td class="px-4 py-3 text-sm font-medium">{{ $notification->booking?->reference ?? 'Unavailable' }}</td>
-                            <td class="px-4 py-3 text-sm">{{ $notification->customer?->name ?? 'Unavailable' }}</td>
-                            <td class="px-4 py-3 text-sm">{{ str($notification->event_type)->replace('.', ' ')->headline() }}</td>
-                            <td class="px-4 py-3"><span @class(['inline-flex rounded-full px-2 py-1 text-xs font-medium', $statusClasses])>{{ str($notification->status)->replace('_', ' ')->headline() }}</span></td>
+                            <td class="px-4 py-3 text-sm font-medium">{{ $notification->booking?->reference ?? __('notifications.settings.unavailable') }}</td>
+                            <td class="px-4 py-3 text-sm">{{ $notification->customer?->name ?? __('notifications.settings.unavailable') }}</td>
+                            <td class="px-4 py-3 text-sm">{{ __('notifications.events.'.str_replace('.', '_', $notification->event_type)) }}</td>
+                            <td class="px-4 py-3"><span @class(['inline-flex rounded-full px-2 py-1 text-xs font-medium', $statusClasses])>{{ __('notifications.provider_statuses.'.$notification->status) }}</span></td>
                             <td class="px-4 py-3 text-sm text-gray-500" title="{{ $notification->created_at->toIso8601String() }}">{{ $notification->created_at->diffForHumans() }}</td>
                             <td class="space-y-2 px-4 py-3">
                                 @if ($notification->status === 'failed')
                                     <x-filament::button color="warning" size="sm" icon="heroicon-o-arrow-path" wire:click="resend('{{ $notification->getKey() }}')" wire:target="resend('{{ $notification->getKey() }}')" wire:loading.attr="disabled">
-                                        Resend
+                                        {{ __('notifications.settings.resend') }}
                                     </x-filament::button>
                                 @endif
                                 <details class="text-sm">
-                                    <summary class="cursor-pointer text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 dark:text-primary-400">Details · {{ $notification->attempts->count() }} attempts</summary>
+                                    <summary class="cursor-pointer text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 dark:text-primary-400">{{ __('notifications.settings.details_attempts', ['count' => $notification->attempts->count()]) }}</summary>
                                     <div class="mt-2 max-w-sm space-y-2 text-xs text-gray-600 dark:text-gray-300">
                                         @if ($notification->error_message)
                                             <p><span class="font-semibold">{{ $notification->error_code }}:</span> {{ $notification->error_message }}</p>
                                         @endif
                                         @forelse ($notification->attempts as $attempt)
                                             <div class="border-s-2 border-gray-200 ps-2 dark:border-gray-700">
-                                                <p>{{ $attempt->created_at->format('Y-m-d H:i:s') }} · {{ $attempt->channel }} · {{ str($attempt->status)->headline() }}</p>
-                                                @if ($attempt->provider_message_id)<p>Provider ID: {{ $attempt->provider_message_id }}</p>@endif
+                                                <p>{{ $attempt->created_at->format('Y-m-d H:i:s') }} · {{ $attempt->channel }} · {{ __('notifications.provider_statuses.'.$attempt->status) }}</p>
+                                                @if ($attempt->provider_message_id)<p>{{ __('notifications.settings.provider_id') }}: {{ $attempt->provider_message_id }}</p>@endif
                                                 @if ($attempt->error_code || $attempt->error_message)<p>{{ $attempt->error_code }} {{ $attempt->error_message }}</p>@endif
                                             </div>
                                         @empty
-                                            <p>No delivery attempts recorded.</p>
+                                            <p>{{ __('notifications.settings.no_attempts') }}</p>
                                         @endforelse
                                     </div>
                                 </details>
                             </td>
                         </tr>
                     @empty
-                        <tr><td colspan="6" class="px-4 py-10 text-center text-sm text-gray-500">No customer notifications match these filters.</td></tr>
+                        <tr><td colspan="6" class="px-4 py-10 text-center text-sm text-gray-500">{{ __('notifications.settings.no_matches') }}</td></tr>
                     @endforelse
                 </tbody>
             </table>

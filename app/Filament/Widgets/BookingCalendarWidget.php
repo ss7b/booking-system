@@ -117,7 +117,7 @@ class BookingCalendarWidget extends FullCalendarWidget
             'title' => implode(' - ', array_filter([
                 $booking->service_name_snapshot,
                 $booking->location?->name,
-                $booking->staff?->name ?? 'Staffless',
+                $booking->staff?->name ?? __('bookings.mode.staffless'),
             ])),
             'start' => $booking->starts_at->toIso8601String(),
             'end' => $booking->ends_at->toIso8601String(),
@@ -165,7 +165,7 @@ class BookingCalendarWidget extends FullCalendarWidget
     {
         return collect(BookingStatus::cases())
             ->mapWithKeys(fn (BookingStatus $status): array => [
-                $status->value => str($status->value)->headline()->toString(),
+                $status->value => __('bookings.statuses.'.$status->value),
             ])
             ->all();
     }
@@ -315,67 +315,67 @@ class BookingCalendarWidget extends FullCalendarWidget
     {
         return FullCalendarViewAction::make()
             ->modalHeading(fn (Booking $record): string => $record->service_name_snapshot)
-            ->modalDescription(fn (Booking $record): string => 'Booking Reference: '.$record->reference)
+            ->modalDescription(fn (Booking $record): string => __('bookings.calendar.reference', ['reference' => $record->reference]))
             ->modalWidth('4xl')
             ->infolist(fn (Infolist $infolist): Infolist => $infolist->schema([
-                Section::make('Appointment')
+                Section::make(__('bookings.calendar.appointment'))
                     ->icon('heroicon-o-calendar-days')
                     ->columns(['default' => 1, 'sm' => 2])
                     ->schema([
                         TextEntry::make('starts_at')
-                            ->label('Booking date')
+                            ->label(__('bookings.calendar.booking_date'))
                             ->getStateUsing(fn (Booking $record): string => $record->starts_at
                                 ->setTimezone($this->bookingTimezone($record))
                                 ->format('l, F j, Y'))
                             ->size('lg'),
                         TextEntry::make('starts_at_time')
-                            ->label('Start time')
+                            ->label(__('bookings.calendar.start_time'))
                             ->getStateUsing(fn (Booking $record): string => $record->starts_at
                                 ->setTimezone($this->bookingTimezone($record))
                                 ->format('g:i A'))
                             ->size('lg'),
                         TextEntry::make('ends_at_time')
-                            ->label('End time')
+                            ->label(__('bookings.calendar.end_time'))
                             ->getStateUsing(fn (Booking $record): string => $record->ends_at
                                 ->setTimezone($this->bookingTimezone($record))
                                 ->format('g:i A')),
-                        TextEntry::make('location.name')->label('Location'),
+                        TextEntry::make('location.name')->label(__('bookings.calendar.location')),
                         TextEntry::make('timezone')
-                            ->label('Timezone')
+                            ->label(__('bookings.calendar.timezone_label'))
                             ->getStateUsing(fn (Booking $record): string => $this->bookingTimezone($record)),
                     ]),
-                Section::make('Booking information')
+                Section::make(__('bookings.calendar.booking_information'))
                     ->icon('heroicon-o-clipboard-document-list')
                     ->columns(['default' => 1, 'sm' => 2])
                     ->schema([
                         TextEntry::make('customer.name')
-                            ->label('Customer')
+                            ->label(__('bookings.calendar.customer'))
                             ->visible(fn (Booking $record): bool => $this->canViewCustomer($record)),
                         TextEntry::make('customer.phone')
-                            ->label('Phone')
+                            ->label(__('bookings.calendar.phone'))
                             ->visible(fn (Booking $record): bool => $this->canViewCustomer($record)),
                         TextEntry::make('customer.email')
-                            ->label('Email')
+                            ->label(__('bookings.calendar.email'))
                             ->visible(fn (Booking $record): bool => $this->canViewCustomer($record) && filled($record->customer?->email)),
-                        TextEntry::make('service_name_snapshot')->label('Service'),
-                        TextEntry::make('location.name')->label('Branch'),
+                        TextEntry::make('service_name_snapshot')->label(__('bookings.calendar.service')),
+                        TextEntry::make('location.name')->label(__('bookings.calendar.branch')),
                         TextEntry::make('staff.name')
-                            ->label('Staff')
+                            ->label(__('bookings.calendar.staff'))
                             ->visible(fn (Booking $record): bool => $record->staff_id !== null),
                         TextEntry::make('booking_mode')
-                            ->label('Booking mode')
+                            ->label(__('bookings.calendar.booking_mode'))
                             ->getStateUsing(fn (Booking $record): string => $this->bookingModeLabel($record)),
                         TextEntry::make('notes')
-                            ->label('Notes')
+                            ->label(__('bookings.calendar.notes'))
                             ->visible(fn (Booking $record): bool => filled($record->notes) && Gate::allows('update', $record))
                             ->columnSpanFull(),
                     ]),
-                Section::make('Booking status')
+                Section::make(__('bookings.calendar.booking_status'))
                     ->icon('heroicon-o-check-circle')
                     ->schema([
                         TextEntry::make('status')
                             ->badge()
-                            ->formatStateUsing(fn (BookingStatus $state): string => str($state->value)->headline()->toString())
+                            ->formatStateUsing(fn (BookingStatus $state): string => __('bookings.statuses.'.$state->value))
                             ->color(fn (BookingStatus $state): string => $this->statusFilamentColor($state)),
                     ]),
             ]))
@@ -435,9 +435,9 @@ class BookingCalendarWidget extends FullCalendarWidget
             ->value('booking_mode');
 
         return match (is_string($value) ? BookingMode::tryFrom($value) : null) {
-            BookingMode::StaffRequired => 'Staff required',
-            BookingMode::Staffless => 'No staff required',
-            null => 'Unavailable',
+            BookingMode::StaffRequired => __('bookings.mode.staff_required'),
+            BookingMode::Staffless => __('bookings.mode.staffless'),
+            null => __('bookings.mode.unavailable'),
         };
     }
 

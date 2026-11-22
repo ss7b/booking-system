@@ -134,7 +134,7 @@ class BookingNotificationProcessingTest extends TestCase
             $this->assertSame(200, $response->getStatusCode(), "The {$page} page should be accessible to the business owner.");
             $response
                 ->assertSee('wire:poll.5s.visible="poll"', false)
-                ->assertSee('Notifications, 1 unread', false);
+                ->assertSee('الإشعارات، 1 غير مقروء', false);
         }
     }
 
@@ -922,13 +922,13 @@ class BookingNotificationProcessingTest extends TestCase
         $this->actingAs($owner, 'web')
             ->get('/admin/'.$business->slug.'/customer-notifications')
             ->assertOk()
-            ->assertSee('Provider connections')
-            ->assertSee('Email via SMTP')
-            ->assertSee('SMS via Twilio')
-            ->assertSee('WhatsApp via Twilio')
-            ->assertSee('Fallback channel 1')
-            ->assertSee('Booking confirmation')
-            ->assertSee('Recent customer notifications');
+            ->assertSee('اتصالات مزودي الخدمة')
+            ->assertSee('البريد الإلكتروني عبر SMTP')
+            ->assertSee('رسائل SMS عبر Twilio')
+            ->assertSee('WhatsApp عبر Twilio')
+            ->assertSee('القناة الاحتياطية 1')
+            ->assertSee('تأكيد الحجز')
+            ->assertSee('إشعارات العملاء الأخيرة');
 
         $this->actingAs($manager, 'web')
             ->get('/admin/'.$business->slug.'/customer-notifications')
@@ -1250,7 +1250,7 @@ class BookingNotificationProcessingTest extends TestCase
         $component->call('refreshInbox')
             ->assertSet('unreadCount', 1)
             ->assertDispatched('admin-notifications-updated')
-            ->assertSee('Rescheduled')
+            ->assertSee('Booking rescheduled')
             ->assertSee($booking->reference);
 
         Livewire::actingAs($manager, 'web');

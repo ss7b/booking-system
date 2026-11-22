@@ -31,9 +31,19 @@ class ManageBusinessMemberships extends Page implements HasForms
 
     protected static ?string $navigationGroup = 'Business Setup';
 
-    protected static ?string $navigationLabel = 'Memberships';
+    protected static ?string $navigationLabel = null;
 
     protected static string $view = 'filament.pages.manage-business-memberships';
+
+    public static function getNavigationLabel(): string
+    {
+        return __('memberships.title');
+    }
+
+    public static function getNavigationGroup(): ?string
+    {
+        return __('navigation.groups.business_setup');
+    }
 
     public ?array $data = [];
 
@@ -64,7 +74,7 @@ class ManageBusinessMemberships extends Page implements HasForms
         return $form
             ->schema([
                 Checkbox::make('create_new_account')
-                    ->label('Create new user account')
+                    ->label(__('actions.new_user'))
                     ->live(),
                 TextInput::make('new_name')
                     ->label('New user name')
@@ -82,17 +92,17 @@ class ManageBusinessMemberships extends Page implements HasForms
                     ->minLength(12)
                     ->visible(fn (Get $get): bool => (bool) $get('create_new_account')),
                 Select::make('user_id')
-                    ->label('Existing user account')
+                    ->label(__('actions.existing_user'))
                     ->options(fn () => User::query()->where('is_active', true)->orderBy('name')->get()->mapWithKeys(fn (User $user): array => [$user->getKey() => $user->name.' ('.$user->email.')']))
                     ->searchable()->preload()->live()
                     ->required(fn (Get $get): bool => ! (bool) $get('create_new_account'))
                     ->disabled(fn (Get $get): bool => (bool) $get('create_new_account'))
                     ->afterStateUpdated(fn ($state) => $this->loadMember($state)),
                 Select::make('role')
-                    ->options(collect(BusinessRole::cases())->mapWithKeys(fn (BusinessRole $role): array => [$role->value => str($role->value)->headline()->toString()]))
+                    ->options(collect(BusinessRole::cases())->mapWithKeys(fn (BusinessRole $role): array => [$role->value => __('roles.'.$role->value)]))
                     ->required()->live(),
                 Radio::make('access_scope')
-                    ->options(['all' => 'All branches', 'selected' => 'Selected branches'])
+                    ->options(['all' => __('roles.scopes.all'), 'selected' => __('roles.scopes.selected')])
                     ->required()
                     ->disabled(fn (Get $get): bool => $get('role') === BusinessRole::Owner->value)
                     ->visible(fn (Get $get): bool => $get('role') !== BusinessRole::Owner->value),
@@ -128,7 +138,7 @@ class ManageBusinessMemberships extends Page implements HasForms
             $userId = (string) $user->getKey();
         }
 
-        abort_unless(! empty($userId), 422, 'Select an existing user or create a new one.');
+        abort_unless(! empty($userId), 422, __('messages.select_member'));
 
         $memberships->save(
             $business,
@@ -138,7 +148,7 @@ class ManageBusinessMemberships extends Page implements HasForms
             $data['location_ids'] ?? [],
         );
 
-        Notification::make()->title('Membership saved')->success()->send();
+        Notification::make()->title(__('actions.membership_saved'))->success()->send();
     }
 
     public function removeMember(string $userId, MembershipManager $memberships): void
@@ -155,7 +165,7 @@ class ManageBusinessMemberships extends Page implements HasForms
             return;
         }
 
-        Notification::make()->title('Membership removed')->success()->send();
+        Notification::make()->title(__('actions.membership_removed'))->success()->send();
     }
 
     public function editMember(string $userId): void

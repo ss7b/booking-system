@@ -10,6 +10,7 @@ use App\Enums\BookingStatus;
 use App\Filament\Forms\Components\BookingAvailabilityPicker;
 use App\Filament\Resources\BookingResource\BookingManagementActions;
 use App\Filament\Resources\BookingResource\Pages\ListBookings;
+use App\Filament\Resources\Concerns\TranslatesResourceLabels;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Location;
@@ -35,6 +36,8 @@ use Illuminate\Support\Facades\DB;
 
 class BookingResource extends Resource
 {
+    use TranslatesResourceLabels;
+
     protected static ?string $model = Booking::class;
 
     protected static ?string $tenantOwnershipRelationshipName = 'business';
@@ -74,7 +77,7 @@ class BookingResource extends Resource
                     ->sortable(),
                 TextColumn::make('status')
                     ->badge()
-                    ->formatStateUsing(fn (BookingStatus $state): string => $state->value)
+                    ->formatStateUsing(fn (BookingStatus $state): string => __('bookings.statuses.'.$state->value))
                     ->color(fn (BookingStatus $state): string => match ($state) {
                         BookingStatus::Held => 'warning',
                         BookingStatus::Confirmed, BookingStatus::CheckedIn => 'success',
@@ -84,16 +87,19 @@ class BookingResource extends Resource
             ])
             ->filters([
                 SelectFilter::make('status')->options(collect(BookingStatus::cases())->mapWithKeys(
-                    fn (BookingStatus $status): array => [$status->value => str($status->value)->headline()->toString()],
+                    fn (BookingStatus $status): array => [$status->value => __('bookings.statuses.'.$status->value)],
                 )),
             ])
             ->headerActions([
                 Action::make('create_booking')
-                    ->label('New booking')
+                    ->label(__('actions.new_booking'))
                     ->icon('heroicon-o-plus')
                     ->visible(fn (): bool => self::canManageCurrentBookings())
                     ->form([
                         Select::make('location_id')
+                            ->label(__('bookings.fields.location'))
+                            ->placeholder(__('bookings.fields.select_location'))
+                            ->columnSpan(1)
                             ->options(fn () => app(BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->where('is_active', true)->orderBy('name')->pluck('name', 'id'))
                             ->live()->required()
                             ->afterStateUpdated(function (callable $set): void {
@@ -104,6 +110,9 @@ class BookingResource extends Resource
                                 $set('starts_at', null);
                             }),
                         Select::make('service_id')
+                            ->label(__('bookings.fields.service'))
+                            ->placeholder(__('bookings.fields.select_service'))
+                            ->columnSpan(1)
                             ->options(fn (Get $get) => Service::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
                                 ->where('is_active', true)
@@ -117,6 +126,9 @@ class BookingResource extends Resource
                                 $set('starts_at', null);
                             }),
                         Select::make('staff_id')
+                            ->label(__('bookings.fields.staff'))
+                            ->placeholder(__('bookings.fields.select_staff'))
+                            ->columnSpanFull()
                             ->options(fn (Get $get) => Staff::query()
                                 ->where('business_id', Filament::getTenant()?->getKey())
                                 ->where('status', 'active')
@@ -134,13 +146,13 @@ class BookingResource extends Resource
                         Hidden::make('selected_date')->dehydrated(false),
                         Hidden::make('calendar_week_start')->dehydrated(false),
                         BookingAvailabilityPicker::make('starts_at')
-                            ->label('Appointment time')
+                            ->label(__('bookings.fields.appointment_time'))
                             ->columnSpanFull()
                             ->required(),
-                        TextInput::make('customer_name')->label('Customer name')->required()->maxLength(200),
-                        TextInput::make('customer_phone')->label('Customer phone')->tel()->required()->maxLength(50),
-                        TextInput::make('customer_email')->label('Customer email')->email()->maxLength(255)->nullable(),
-                        Textarea::make('notes')->maxLength(5000)->nullable()->columnSpanFull(),
+                        TextInput::make('customer_name')->label(__('bookings.fields.customer_name'))->required()->maxLength(200),
+                        TextInput::make('customer_phone')->label(__('bookings.fields.customer_phone'))->tel()->extraInputAttributes(['dir' => 'ltr'])->required()->maxLength(50),
+                        TextInput::make('customer_email')->label(__('bookings.fields.customer_email'))->email()->extraInputAttributes(['dir' => 'ltr'])->maxLength(255)->nullable(),
+                        Textarea::make('notes')->label(__('bookings.fields.notes'))->maxLength(5000)->nullable()->columnSpanFull(),
                     ])
                     ->action(function (array $data): void {
                         $business = Filament::getTenant();
@@ -185,16 +197,16 @@ class BookingResource extends Resource
                                 (string) Filament::auth()->id(),
                             );
 
-                            Notification::make()->title('Booking created')->body($result->booking->reference)->success()->send();
+                            Notification::make()->title(__('messages.booking_created'))->body($result->booking->reference)->success()->send();
                         } catch (DomainException $exception) {
                             $message = match ($exception->getMessage()) {
-                                'CUSTOMER_CONTACT_CONFLICT' => 'Customer contact details match multiple customer records.',
-                                'CUSTOMER_BOOKING_OVERLAP' => 'The customer already has a booking during this time.',
-                                'CUSTOMER_SERVICE_DAILY_LIMIT' => 'You already have an active booking for this service on the selected date.',
+                                'CUSTOMER_CONTACT_CONFLICT' => __('messages.customer_contact_conflict'),
+                                'CUSTOMER_BOOKING_OVERLAP' => __('messages.customer_booking_overlap'),
+                                'CUSTOMER_SERVICE_DAILY_LIMIT' => __('messages.customer_daily_limit'),
                                 default => $exception->getMessage(),
                             };
 
-                            Notification::make()->title('Booking was not created')->body($message)->danger()->send();
+                            Notification::make()->title(__('messages.booking_was_not_created'))->body($message)->danger()->send();
                         }
                     }),
             ])

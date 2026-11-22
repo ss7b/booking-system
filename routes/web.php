@@ -1,6 +1,10 @@
 <?php
 
+use App\Http\Controllers\Filament\SetLocaleController;
 use Illuminate\Support\Facades\Route;
+
+Route::post('/admin/locale', SetLocaleController::class)
+    ->name('filament.locale.update');
 
 Route::get('/', function () {
     return view('welcome');

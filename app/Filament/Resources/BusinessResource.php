@@ -42,8 +42,9 @@ class BusinessResource extends TenantResource
                 Forms\Components\Toggle::make('is_active')->default(true),
                 Forms\Components\TextInput::make('booking_management_url')
                     ->label('Booking Management URL')
+                    ->extraInputAttributes(['dir' => 'ltr'])
                     ->placeholder('https://clinic.com/manage-booking')
-                    ->helperText('Use HTTPS outside local and testing environments.')
+                    ->helperText(__('messages.https_only'))
                     ->dehydrated(false)
                     ->afterStateHydrated(function (Forms\Components\TextInput $component, ?Business $record): void {
                         $value = data_get($record?->metadata, 'booking_management_url');
@@ -52,7 +53,7 @@ class BusinessResource extends TenantResource
                     ->rules([
                         new ClosureValidationRule(function (string $attribute, mixed $value, \Closure $fail): void {
                             if (filled($value) && ! BookingManagementLink::isValidManagementUrl($value)) {
-                                $fail('Enter a valid management URL. HTTPS is required except for local development URLs in local or testing environments.');
+                                $fail(__('messages.invalid_management_url'));
                             }
                         }),
                     ]),

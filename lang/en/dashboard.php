@@ -1,0 +1,60 @@
+<?php
+
+return [
+    'analytics' => 'Booking analytics',
+    'operations' => 'Operations dashboard',
+    'tabs' => [
+        'label' => 'Dashboard sections',
+        'dashboard' => 'Dashboard',
+        'reports' => 'Reports',
+    ],
+    'filters' => [
+        'title' => 'Report filters',
+        'period' => 'Period',
+        'today' => 'Today',
+        'current_week' => 'This week',
+        'current_month' => 'This month',
+        'branch' => 'Branch',
+        'select_branch' => 'Select a branch',
+        'apply' => 'Apply filters',
+        'no_branches' => 'No branches are available for reporting.',
+        'choose_to_view' => 'Select a branch and apply the filters to view its reports.',
+        'invalid_branch' => 'Select a branch you have access to.',
+        'invalid_period' => 'Select a supported reporting period.',
+        'applied_scope' => ':branch · :range',
+        'date_range' => ':first – :last',
+    ],
+    'statistics' => [
+        'total' => 'Total bookings',
+        'confirmed' => 'Confirmed bookings',
+        'completed' => 'Completed bookings',
+        'cancelled' => 'Cancelled bookings',
+        'pending' => 'Pending bookings',
+        'cancellation_rate' => 'Cancellation rate',
+        'definitions' => [
+            'total' => 'Confirmed bookings and their later outcomes.',
+            'cancelled' => 'Cancellations after confirmation.',
+            'pending' => 'Temporary holds that have not expired.',
+            'cancellation_rate' => 'Cancellations after confirmation divided by total bookings.',
+        ],
+    ],
+    'percentage' => ':value%',
+    'trend' => [
+        'title' => 'Booking trend',
+        'day' => 'Day',
+        'count' => 'Bookings',
+        'empty' => 'No confirmed booking activity in this period.',
+    ],
+    'services' => [
+        'title' => 'Top services',
+        'empty' => 'No service bookings in this period.',
+        'unnamed' => 'Unnamed service',
+    ],
+    'staff' => [
+        'title' => 'Bookings by staff member',
+        'empty' => 'No bookings to display in this period.',
+        'staffless' => 'Staffless',
+        'unnamed' => 'Unnamed staff member',
+    ],
+    'upcoming' => 'Upcoming bookings',
+];

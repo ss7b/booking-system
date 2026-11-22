@@ -12,7 +12,7 @@ use App\Models\Location;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Testing\TestResponse;
@@ -22,7 +22,7 @@ use Tests\TestCase;
 
 class ResourceDisplayAuthorizationTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     private const PAGES = [
         'calendar_rules' => ['calendar-rules', 'manage-calendar-rules'],

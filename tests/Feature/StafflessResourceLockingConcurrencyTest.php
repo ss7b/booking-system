@@ -24,6 +24,8 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
     /** @var list<string> */
     private array $businessIds = [];
 
+    private int $phoneSequence = 0;
+
     public function test_two_concurrent_holds_cannot_consume_the_last_capacity_unit(): void
     {
         $fixture = $this->fixture();
@@ -36,7 +38,11 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
 
         $this->assertSame(1, $this->countStatus($fixture, BookingStatus::Held));
         $this->assertSame(1, $this->countResult($results, 'created'));
-        $this->assertSame(1, $this->countRejection($results, 'SLOT_UNAVAILABLE'));
+        $this->assertSame(
+            1,
+            $this->countRejection($results, 'SLOT_UNAVAILABLE'),
+            json_encode($results, JSON_THROW_ON_ERROR),
+        );
     }
 
     public function test_expired_hold_confirmation_racing_expiration_releases_capacity_once(): void
@@ -103,7 +109,11 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
         $results = $this->runLockedRace($fixture, $payloads, [[0, 0], [1, 0]]);
 
         $this->assertSame(1, $this->countResult($results, 'rescheduled') + $this->countResult($results, 'created'));
-        $this->assertSame(1, $this->countRejection($results, 'SLOT_UNAVAILABLE'));
+        $this->assertSame(
+            1,
+            $this->countRejection($results, 'SLOT_UNAVAILABLE'),
+            json_encode($results, JSON_THROW_ON_ERROR),
+        );
         $this->assertSame(1, $this->countBookingsAt($fixture, $targetId, '10:00'));
     }
 
@@ -334,7 +344,7 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
             $fixture['services'][$serviceIndex],
             null,
             $this->start($fixture, $time),
-            ['name' => 'Seed Customer', 'phone' => '966500'.Str::random(10)],
+            ['name' => 'Seed Customer', 'phone' => $this->uniquePhone()],
             null,
             $hold,
         );
@@ -348,7 +358,7 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
             'location_id' => $fixture['locations'][$locationIndex]->getKey(),
             'service_id' => $fixture['services'][$serviceIndex]->getKey(),
             'start' => $this->start($fixture, $time)->format(DATE_ATOM),
-            'phone' => '966500'.Str::random(10),
+            'phone' => $this->uniquePhone(),
             'hold' => $hold,
         ];
     }
@@ -368,6 +378,11 @@ class StafflessResourceLockingConcurrencyTest extends TestCase
     private function start(array $fixture, string $time): DateTimeImmutable
     {
         return new DateTimeImmutable($fixture['date'].'T'.$time.':00+03:00');
+    }
+
+    private function uniquePhone(): string
+    {
+        return '966500'.str_pad((string) ++$this->phoneSequence, 10, '0', STR_PAD_LEFT);
     }
 
     private function runLockedRace(array $fixture, array $payloads, array $resourceIndexes, int $holdMicros = 0): array

@@ -33,6 +33,7 @@ return [
         'view' => 'عرض الحجوزات',
         'table_view' => 'جدول',
         'calendar_view' => 'تقويم',
+        'open_calendar' => 'تقويم الحجوزات',
         'location' => 'الفرع',
         'all_locations' => 'جميع الفروع',
         'service' => 'الخدمة',

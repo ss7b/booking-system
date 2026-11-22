@@ -33,6 +33,7 @@ return [
         'view' => 'Booking view',
         'table_view' => 'Table',
         'calendar_view' => 'Calendar',
+        'open_calendar' => 'Booking calendar',
         'location' => 'Location',
         'all_locations' => 'All locations',
         'service' => 'Service',

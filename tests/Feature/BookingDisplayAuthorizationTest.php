@@ -8,6 +8,7 @@ use App\Domain\Authorization\ManageBusinessMemberships;
 use App\Enums\BookingStatus;
 use App\Enums\BranchAccessScope;
 use App\Enums\BusinessRole;
+use App\Filament\Widgets\BookingCalendarWidget;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
@@ -15,6 +16,8 @@ use App\Models\Location;
 use App\Models\Service;
 use App\Models\Staff;
 use App\Models\User;
+use Filament\Facades\Filament;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -313,6 +316,43 @@ class BookingDisplayAuthorizationTest extends TestCase
         $this->assertSame([], json_decode($next, true, flags: JSON_THROW_ON_ERROR)['data']['mountedTableActions'][0]);
         $this->livewireCall($next, 'callMountedTableAction')->assertOk();
         $this->assertBookingWasNotChanged($booking);
+    }
+
+    public function test_calendar_link_opens_the_existing_calendar_with_scoped_events_and_details(): void
+    {
+        $user = User::factory()->create();
+        [$business, $bookings] = $this->bookingFixture('calendar', $user, BusinessRole::Staff, BranchAccessScope::Selected, linked: true);
+        [$foreign, $foreignBookings] = $this->bookingFixture('foreign-calendar', User::factory()->create(), BusinessRole::Owner, BranchAccessScope::All);
+        $this->actingAs($user, 'web');
+
+        $url = $this->pageUrl($business);
+        $this->get($url)->assertOk()->assertDontSeeLivewire(BookingCalendarWidget::class);
+        $this->get($url.'?view%5B0%5D=calendar')->assertOk()->assertDontSeeLivewire(BookingCalendarWidget::class);
+        $this->get($url.'?view=calendar')->assertOk()->assertSeeLivewire(BookingCalendarWidget::class);
+        $this->get($this->pageUrl($foreign).'?view=calendar')->assertNotFound();
+
+        Filament::setTenant($business);
+        $start = $bookings['confirmed']->starts_at->startOfDay();
+        $range = ['start' => $start->toIso8601String(), 'end' => $start->addDay()->toIso8601String()];
+        $allowed = collect($bookings)->only(['held', 'confirmed', 'checked-in', 'cancelled'])->map->getKey()->values()->all();
+
+        $calendar = Livewire::test(BookingCalendarWidget::class)
+            ->call('fetchEvents', $range)
+            ->assertReturned(fn (array $events): bool => array_column($events, 'id') === $allowed)
+            ->set('filters.location_id', $bookings['south']->location_id)
+            ->call('fetchEvents', $range)
+            ->assertReturned([]);
+
+        $calendar->call('onEventClick', ['id' => $bookings['confirmed']->getKey()])
+            ->assertSet('mountedActions.0', 'view')
+            ->assertDontSee('Fixture customer');
+
+        foreach ([$bookings['another-staff'], $bookings['south'], $foreignBookings['confirmed']] as $excluded) {
+            $this->assertThrows(
+                fn () => Livewire::test(BookingCalendarWidget::class)->call('onEventClick', ['id' => $excluded->getKey()]),
+                ModelNotFoundException::class,
+            );
+        }
     }
 
     private function assertBookingWasNotChanged(Booking $booking): void

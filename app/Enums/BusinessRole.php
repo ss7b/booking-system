@@ -19,6 +19,11 @@ enum BusinessRole: string
         return in_array($this, [self::Owner, self::Manager], true);
     }
 
+    public function canViewReports(): bool
+    {
+        return in_array($this, [self::Owner, self::Manager], true);
+    }
+
     public function canManageBookings(): bool
     {
         return in_array($this, [self::Owner, self::Manager, self::Receptionist], true);

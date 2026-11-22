@@ -13,6 +13,15 @@ class ListBookings extends ListRecords
 
     public string $displayMode = 'table';
 
+    public function mount(): void
+    {
+        parent::mount();
+
+        if (request()->query('view') === 'calendar') {
+            $this->setDisplayMode('calendar');
+        }
+    }
+
     public function setDisplayMode(string $displayMode): void
     {
         abort_unless(in_array($displayMode, ['table', 'calendar'], true), 404);

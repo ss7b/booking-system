@@ -2,10 +2,9 @@
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\CalendarOverrideResource\Pages\ManageCalendarOverrides;
-use App\Models\AvailabilityCalendar;
-use App\Models\CalendarOverride;
 use App\Domain\Authorization\BusinessAccess;
+use App\Filament\Resources\CalendarOverrideResource\Pages\ManageCalendarOverrides;
+use App\Models\CalendarOverride;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -26,7 +25,9 @@ class CalendarOverrideResource extends Resource
         $business = Filament::getTenant();
         $user = Filament::auth()->user();
 
-        if (! $business || ! $user) return CalendarOverride::query()->whereRaw('1 = 0');
+        if (! $business || ! $user) {
+            return CalendarOverride::query()->whereRaw('1 = 0');
+        }
 
         return CalendarOverride::query()->whereIn('calendar_id', app(BusinessAccess::class)->calendars($user, $business)->select('id'));
     }

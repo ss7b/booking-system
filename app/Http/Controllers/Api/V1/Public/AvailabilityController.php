@@ -3,14 +3,13 @@
 namespace App\Http\Controllers\Api\V1\Public;
 
 use App\Domain\Availability\Services\AvailabilityService;
-use App\Http\Controllers\Controller;
 use App\Enums\BookingMode;
+use App\Http\Controllers\Controller;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\Service;
 use App\Models\ServiceLocation;
 use App\Models\Staff;
-use DateInterval;
 use DateTimeImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -122,14 +121,15 @@ class AvailabilityController extends Controller
                 ->findOrFail($filters['staff_id']);
         }
 
-        $dates = [];
-
-        for ($date = $from; $date <= $until; $date = $date->add(new DateInterval('P1D'))) {
-            $dateString = $date->format('Y-m-d');
-            $result = $availability->forDate($business, $location, $service, $dateString, $staff, assignment: $assignment);
-
-            $dates[] = ['date' => $dateString, 'available' => $result['slots'] !== []];
-        }
+        $dates = $availability->forDateRange(
+            $business,
+            $location,
+            $service,
+            $filters['from'],
+            $filters['until'],
+            $staff,
+            assignment: $assignment,
+        );
 
         return response()->json(['data' => $dates]);
     }

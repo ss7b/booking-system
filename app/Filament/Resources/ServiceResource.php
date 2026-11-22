@@ -105,6 +105,7 @@ class ServiceResource extends TenantResource
     {
         return parent::getEloquentQuery()
             ->withCount('locations')
+            ->withCount('bookings')
             ->withCount([
                 'locations as staffless_locations_count' => fn (Builder $query) => $query
                     ->where('service_locations.booking_mode', BookingMode::Staffless->value),
@@ -165,7 +166,12 @@ class ServiceResource extends TenantResource
                     }),
                 Tables\Actions\DeleteAction::make()
                     ->modalHeading(__('filament-actions::delete.single.label'))
-                    ->visible(fn (Service $record): bool => ! $record->bookings()->exists()),
+                    ->visible(fn (Service $record): bool => (int) $record->bookings_count === 0)
+                    ->before(fn (Service $record) => abort_unless(
+                        ! $record->bookings()->exists(),
+                        422,
+                        'This service has bookings and cannot be deleted.',
+                    )),
             ]);
     }
 

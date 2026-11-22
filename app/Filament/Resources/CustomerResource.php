@@ -8,12 +8,18 @@ use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class CustomerResource extends TenantResource
 {
     protected static ?string $model = Customer::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-user-group';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->withCount('bookings');
+    }
 
     public static function form(Form $form): Form
     {
@@ -41,7 +47,12 @@ class CustomerResource extends TenantResource
                 Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
                 Tables\Actions\DeleteAction::make()
                     ->modalHeading(__('filament-actions::delete.single.label'))
-                    ->visible(fn (Customer $record): bool => ! $record->bookings()->exists()),
+                    ->visible(fn (Customer $record): bool => (int) $record->bookings_count === 0)
+                    ->before(fn (Customer $record) => abort_unless(
+                        ! $record->bookings()->exists(),
+                        422,
+                        'This customer has bookings and cannot be deleted.',
+                    )),
             ]);
     }
 

@@ -2,20 +2,26 @@
 
 namespace App\Filament\Resources;
 
+use App\Domain\Authorization\BusinessAccess;
 use App\Filament\Resources\LocationResource\Pages\ManageLocations;
-use App\Models\AvailabilityCalendar;
 use App\Models\Location;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class LocationResource extends TenantResource
 {
     protected static ?string $model = Location::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-map-pin';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()->withCount('bookings');
+    }
 
     public static function form(Form $form): Form
     {
@@ -26,7 +32,7 @@ class LocationResource extends TenantResource
                 Forms\Components\TextInput::make('timezone')->maxLength(64)->placeholder('Asia/Riyadh'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => app(\App\Domain\Authorization\BusinessAccess::class)
+                    ->options(fn () => app(BusinessAccess::class)
                         ->calendars(Filament::auth()->user(), Filament::getTenant())
                         ->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
@@ -49,7 +55,13 @@ class LocationResource extends TenantResource
             ->filters([Tables\Filters\TernaryFilter::make('is_active')])
             ->actions([
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make()->visible(fn (Location $record): bool => ! $record->bookings()->exists()),
+                Tables\Actions\DeleteAction::make()
+                    ->visible(fn (Location $record): bool => (int) $record->bookings_count === 0)
+                    ->before(fn (Location $record) => abort_unless(
+                        ! $record->bookings()->exists(),
+                        422,
+                        'This location has bookings and cannot be deleted.',
+                    )),
             ]);
     }
 

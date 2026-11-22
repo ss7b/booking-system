@@ -37,4 +37,32 @@ class ScheduleResolverTest extends TestCase
         $this->assertSame('11:00', $windows[0]->start->format('H:i'));
         $this->assertSame('13:00', $windows[0]->end->format('H:i'));
     }
+
+    public function test_dst_transition_and_location_timezone_are_preserved(): void
+    {
+        $resolver = new ScheduleResolver;
+        $rules = [
+            ['day_of_week' => 0, 'start_time' => '09:00', 'end_time' => '17:00'],
+        ];
+
+        $before = $resolver->resolve(
+            '2026-10-25',
+            'America/New_York',
+            $rules,
+            [],
+        );
+        $after = $resolver->resolve(
+            '2026-11-01',
+            'America/New_York',
+            $rules,
+            [],
+        );
+
+        $this->assertSame('America/New_York', $before[0]->start->getTimezone()->getName());
+        $this->assertSame('America/New_York', $after[0]->start->getTimezone()->getName());
+        $this->assertSame('09:00', $before[0]->start->format('H:i'));
+        $this->assertSame('09:00', $after[0]->start->format('H:i'));
+        $this->assertSame('-04:00', $before[0]->start->format('P'));
+        $this->assertSame('-05:00', $after[0]->start->format('P'));
+    }
 }

@@ -2,8 +2,8 @@
 
 namespace App\Filament\Resources;
 
+use App\Domain\Authorization\BusinessAccess;
 use App\Filament\Resources\StaffResource\Pages\ManageStaff;
-use App\Models\AvailabilityCalendar;
 use App\Models\Business;
 use App\Models\Staff;
 use App\Models\User;
@@ -12,12 +12,20 @@ use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class StaffResource extends TenantResource
 {
     protected static ?string $model = Staff::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-users';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->with(['services:id,name', 'locations:id,name'])
+            ->withCount(['bookings', 'blocks']);
+    }
 
     public static function form(Form $form): Form
     {
@@ -40,13 +48,13 @@ class StaffResource extends TenantResource
                 Forms\Components\Select::make('status')->options(['active' => 'Active', 'inactive' => 'Inactive', 'archived' => 'Archived'])->required()->default('active'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => app(\App\Domain\Authorization\BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
+                    ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
                     ->searchable()->nullable(),
                 Forms\Components\Select::make('services')
-                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(\App\Domain\Authorization\BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
+                    ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
                 Forms\Components\Select::make('locations')
-                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('locations.id', app(\App\Domain\Authorization\BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->select('id')))
+                    ->relationship('locations', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('locations.id', app(BusinessAccess::class)->locations(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),
             ]);
     }
@@ -66,7 +74,12 @@ class StaffResource extends TenantResource
                 Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
                 Tables\Actions\DeleteAction::make()
                     ->modalHeading(__('filament-actions::delete.single.label'))
-                    ->visible(fn (Staff $record): bool => ! $record->bookings()->exists() && ! $record->blocks()->exists()),
+                    ->visible(fn (Staff $record): bool => (int) $record->bookings_count === 0 && (int) $record->blocks_count === 0)
+                    ->before(fn (Staff $record) => abort_unless(
+                        ! $record->bookings()->exists() && ! $record->blocks()->exists(),
+                        422,
+                        'This staff member has bookings or blocks and cannot be deleted.',
+                    )),
             ]);
     }
 

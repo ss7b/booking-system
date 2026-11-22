@@ -54,7 +54,8 @@ class BookingResource extends Resource
 
         BusinessMembershipRequestContext::beginForBooking($user, $tenant);
 
-        return app(BusinessAccess::class)->bookings($user, $tenant);
+        return app(BusinessAccess::class)->bookings($user, $tenant)
+            ->with(['customer', 'staff', 'location']);
     }
 
     public static function table(Table $table): Table

@@ -38,6 +38,266 @@ class StafflessBookingTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_availability_calendar_range_batches_staffless_busy_reads(): void
+    {
+        $fixture = $this->fixture(BookingMode::Staffless, 2);
+        $until = (new DateTimeImmutable($fixture['date'], new DateTimeZone('Asia/Riyadh')))->modify('+30 days')->format('Y-m-d');
+        $headers = ['X-Business-Slug' => $fixture['business']->slug];
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $response = $this->getJson('/api/v1/availability/calendar?'.http_build_query([
+            'service_id' => $fixture['service']->getKey(),
+            'location_id' => $fixture['location']->getKey(),
+            'from' => $fixture['date'],
+            'until' => $until,
+        ]), $headers)->assertOk();
+
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+
+        $this->assertCount(31, $response->json('data'));
+        $busyQueries = array_values(array_filter(
+            $queries,
+            static fn (array $query): bool => str_contains($query['query'], 'occupied_starts_at')
+                && str_contains($query['query'], 'occupied_ends_at'),
+        ));
+        $this->assertCount(1, $busyQueries);
+    }
+
+    public function test_availability_calendar_range_batches_staff_required_busy_reads(): void
+    {
+        $fixture = $this->fixture(BookingMode::StaffRequired, 1);
+        $staff = Staff::query()->create([
+            'business_id' => $fixture['business']->getKey(),
+            'name' => 'Range Staff',
+            'status' => 'active',
+        ]);
+        $staff->services()->sync([$fixture['service']->getKey()]);
+        $staff->locations()->sync([$fixture['location']->getKey() => ['is_active' => true]]);
+        $until = (new DateTimeImmutable($fixture['date'], new DateTimeZone('Asia/Riyadh')))->modify('+30 days')->format('Y-m-d');
+        $headers = ['X-Business-Slug' => $fixture['business']->slug];
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $response = $this->getJson('/api/v1/availability/calendar?'.http_build_query([
+            'service_id' => $fixture['service']->getKey(),
+            'location_id' => $fixture['location']->getKey(),
+            'from' => $fixture['date'],
+            'until' => $until,
+        ]), $headers)->assertOk();
+
+        $queries = DB::getQueryLog();
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+
+        $this->assertCount(31, $response->json('data'));
+        $blockQueries = array_values(array_filter(
+            $queries,
+            static fn (array $query): bool => str_contains($query['query'], 'staff_blocks'),
+        ));
+        $bookingQueries = array_values(array_filter(
+            $queries,
+            static fn (array $query): bool => str_contains($query['query'], 'occupied_starts_at')
+                && str_contains($query['query'], 'occupied_ends_at'),
+        ));
+        $this->assertCount(1, $blockQueries);
+        $this->assertCount(1, $bookingQueries);
+    }
+
+    public function test_old_and_batched_availability_outputs_match_for_staffless_and_staff_required(): void
+    {
+        $rangeCases = [
+            'one-day' => ['2026-10-15', '2026-10-15'],
+            'seven-days' => ['2026-10-12', '2026-10-18'],
+            'month-end' => ['2026-01-28', '2026-02-03'],
+            'year-end' => ['2026-12-28', '2027-01-03'],
+            'thirty-one-days' => ['2026-10-01', '2026-10-31'],
+        ];
+
+        foreach ([1, 3] as $capacity) {
+            $fixture = $this->fixture(BookingMode::Staffless, $capacity);
+            $calendar = $fixture['location']->calendar;
+            for ($day = 0; $day <= 6; $day++) {
+                $calendar->rules()->updateOrCreate(
+                    ['day_of_week' => $day, 'start_time' => '08:00:00', 'end_time' => '12:00:00'],
+                );
+            }
+
+            foreach ($rangeCases as $rangeName => [$from, $until]) {
+                $old = [];
+                $legacy = app(AvailabilityService::class);
+                $assignment = ServiceLocation::query()
+                    ->where('service_id', $fixture['service']->getKey())
+                    ->where('location_id', $fixture['location']->getKey())
+                    ->firstOrFail();
+                for ($date = new DateTimeImmutable($from, new DateTimeZone('Asia/Riyadh'));
+                    $date <= new DateTimeImmutable($until, new DateTimeZone('Asia/Riyadh'));
+                    $date = $date->modify('+1 day')) {
+                    $old[] = $legacy->forDate(
+                        $fixture['business'],
+                        $fixture['location'],
+                        $fixture['service'],
+                        $date->format('Y-m-d'),
+                        assignment: $assignment,
+                    );
+                }
+
+                $batched = app(AvailabilityService::class)->forDateRange(
+                    $fixture['business'],
+                    $fixture['location'],
+                    $fixture['service'],
+                    $from,
+                    $until,
+                    assignment: $assignment,
+                );
+
+                $this->assertSame(
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'available' => $item['slots'] !== [],
+                        'slots' => array_map(
+                            static fn (array $slot): array => [
+                                'start' => $slot['start'],
+                                'end' => $slot['end'],
+                            ],
+                            $item['slots'],
+                        ),
+                        'slot_options' => $item['slot_options'],
+                    ], $old),
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'available' => $item['available'],
+                        'slots' => [],
+                        'slot_options' => [],
+                    ], $batched),
+                    "Staffless capacity {$capacity} differed in {$rangeName}",
+                );
+
+                $batchedSlots = [];
+                for ($date = new DateTimeImmutable($from, new DateTimeZone('Asia/Riyadh'));
+                    $date <= new DateTimeImmutable($until, new DateTimeZone('Asia/Riyadh'));
+                    $date = $date->modify('+1 day')) {
+                    $batchedSlots[] = app(AvailabilityService::class)->forDate(
+                        $fixture['business'],
+                        $fixture['location'],
+                        $fixture['service'],
+                        $date->format('Y-m-d'),
+                        assignment: $assignment,
+                    );
+                }
+
+                $this->assertSame(
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'slots' => $item['slots'],
+                        'slot_options' => $item['slot_options'],
+                    ], $old),
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'slots' => $item['slots'],
+                        'slot_options' => $item['slot_options'],
+                    ], $batchedSlots),
+                    "Staffless capacity {$capacity} slot payload differed in {$rangeName}",
+                );
+            }
+        }
+
+        foreach ([1, 3] as $staffCount) {
+            $fixture = $this->fixture(BookingMode::StaffRequired, 1);
+            $staffMembers = collect();
+            for ($index = 0; $index < $staffCount; $index++) {
+                $staff = Staff::query()->create([
+                    'business_id' => $fixture['business']->getKey(),
+                    'name' => "Comparison Staff {$index}",
+                    'status' => 'active',
+                ]);
+                $staff->services()->sync([$fixture['service']->getKey()]);
+                $staff->locations()->sync([$fixture['location']->getKey() => ['is_active' => true]]);
+                $staffMembers->push($staff);
+            }
+
+            foreach ($rangeCases as $rangeName => [$from, $until]) {
+                $old = [];
+                $assignment = ServiceLocation::query()
+                    ->where('service_id', $fixture['service']->getKey())
+                    ->where('location_id', $fixture['location']->getKey())
+                    ->firstOrFail();
+                for ($date = new DateTimeImmutable($from, new DateTimeZone('Asia/Riyadh'));
+                    $date <= new DateTimeImmutable($until, new DateTimeZone('Asia/Riyadh'));
+                    $date = $date->modify('+1 day')) {
+                    $old[] = app(AvailabilityService::class)->forDate(
+                        $fixture['business'],
+                        $fixture['location'],
+                        $fixture['service'],
+                        $date->format('Y-m-d'),
+                        assignment: $assignment,
+                    );
+                }
+
+                $batched = app(AvailabilityService::class)->forDateRange(
+                    $fixture['business'],
+                    $fixture['location'],
+                    $fixture['service'],
+                    $from,
+                    $until,
+                    assignment: $assignment,
+                );
+
+                $this->assertSame(
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'available' => $item['slots'] !== [],
+                        'slots' => array_map(
+                            static fn (array $slot): array => [
+                                'staff_id' => $slot['staff_id'],
+                                'start' => $slot['start'],
+                                'end' => $slot['end'],
+                            ],
+                            $item['slots'],
+                        ),
+                    ], $old),
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'available' => $item['available'],
+                        'slots' => [],
+                    ], $batched),
+                    "Staff Required {$staffCount} staff differed in {$rangeName}",
+                );
+
+                $batchedSlots = [];
+                for ($date = new DateTimeImmutable($from, new DateTimeZone('Asia/Riyadh'));
+                    $date <= new DateTimeImmutable($until, new DateTimeZone('Asia/Riyadh'));
+                    $date = $date->modify('+1 day')) {
+                    $batchedSlots[] = app(AvailabilityService::class)->forDate(
+                        $fixture['business'],
+                        $fixture['location'],
+                        $fixture['service'],
+                        $date->format('Y-m-d'),
+                        assignment: $assignment,
+                    );
+                }
+
+                $this->assertSame(
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'slots' => $item['slots'],
+                        'slot_options' => $item['slot_options'],
+                    ], $old),
+                    array_map(static fn (array $item): array => [
+                        'date' => $item['date'],
+                        'slots' => $item['slots'],
+                        'slot_options' => $item['slot_options'],
+                    ], $batchedSlots),
+                    "Staff Required {$staffCount} staff slot payload differed in {$rangeName}",
+                );
+            }
+        }
+    }
+
     public function test_public_api_exposes_location_booking_mode_and_creates_staffless_booking(): void
     {
         $fixture = $this->fixture(BookingMode::Staffless, 1);

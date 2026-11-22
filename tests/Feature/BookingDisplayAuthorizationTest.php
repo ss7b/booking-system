@@ -28,6 +28,44 @@ class BookingDisplayAuthorizationTest extends TestCase
 {
     use RefreshDatabase;
 
+    #[DataProvider('bookingContextFlagMatrix')]
+    public function test_booking_context_activation_respects_feature_flags(
+        bool $legacy,
+        bool $unified,
+        bool $resourceEnabled,
+    ): void {
+        $user = User::factory()->create();
+        [$business] = $this->bookingFixture('feature-flags', $user, BusinessRole::Owner, BranchAccessScope::All);
+        $this->actingAs($user, 'web');
+
+        config([
+            'booking.authorization_display_context' => $legacy,
+            'booking.unified_authorization_display_context' => $unified,
+            'booking.resource_authorization_display_context.enabled' => $resourceEnabled,
+            'booking.resource_authorization_display_context.disabled_resources' => [],
+        ]);
+
+        BusinessMembershipRequestContext::beginForBooking($user, $business);
+
+        $this->assertSame(
+            $unified,
+            BusinessMembershipRequestContext::isActiveFor($user, $business),
+        );
+    }
+
+    public static function bookingContextFlagMatrix(): array
+    {
+        return [
+            'all off' => [false, false, false],
+            'legacy only' => [true, false, false],
+            'unified only' => [false, true, false],
+            'legacy and unified' => [true, true, false],
+            'resource phase two only' => [false, false, true],
+            'resource and legacy' => [true, false, true],
+            'resource and unified' => [false, true, true],
+        ];
+    }
+
     #[DataProvider('roles')]
     public function test_booking_rows_and_actions_match_across_context_modes(
         BusinessRole $role,

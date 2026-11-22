@@ -8,12 +8,19 @@ use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Tables;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 
 class AvailabilityCalendarResource extends TenantResource
 {
     protected static ?string $model = AvailabilityCalendar::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-calendar';
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->withCount(['rules', 'overrides']);
+    }
 
     public static function form(Form $form): Form
     {
@@ -36,7 +43,12 @@ class AvailabilityCalendarResource extends TenantResource
             ->filters([])
             ->actions([
                 Tables\Actions\EditAction::make(),
-                Tables\Actions\DeleteAction::make()->visible(fn (AvailabilityCalendar $record): bool => ! $record->rules()->exists() && ! $record->overrides()->exists()),
+                Tables\Actions\DeleteAction::make()->visible(fn (AvailabilityCalendar $record): bool => (int) $record->rules_count === 0 && (int) $record->overrides_count === 0)
+                    ->before(fn (AvailabilityCalendar $record) => abort_unless(
+                        ! $record->rules()->exists() && ! $record->overrides()->exists(),
+                        422,
+                        'This availability calendar has rules or overrides and cannot be deleted.',
+                    )),
             ]);
     }
 

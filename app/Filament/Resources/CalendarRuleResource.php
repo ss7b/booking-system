@@ -2,10 +2,10 @@
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\CalendarRuleResource\Pages\ManageCalendarRules;
-use App\Domain\Authorization\BusinessMembershipRequestContext;
-use App\Models\CalendarRule;
 use App\Domain\Authorization\BusinessAccess;
+use App\Domain\Authorization\BusinessMembershipRequestContext;
+use App\Filament\Resources\CalendarRuleResource\Pages\ManageCalendarRules;
+use App\Models\CalendarRule;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -27,7 +27,9 @@ class CalendarRuleResource extends Resource
         $business = Filament::getTenant();
         $user = Filament::auth()->user();
 
-        if (! $business || ! $user) return CalendarRule::query()->whereRaw('1 = 0');
+        if (! $business || ! $user) {
+            return CalendarRule::query()->whereRaw('1 = 0');
+        }
 
         BusinessMembershipRequestContext::beginForResource('calendar_rules', $user, $business);
 

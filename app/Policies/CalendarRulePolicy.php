@@ -3,7 +3,9 @@
 namespace App\Policies;
 
 use App\Domain\Authorization\BusinessAccess;
+use App\Enums\BusinessRole;
 use App\Models\AvailabilityCalendar;
+use App\Models\Business;
 use App\Models\CalendarRule;
 use App\Models\User;
 use Filament\Facades\Filament;
@@ -17,23 +19,24 @@ class CalendarRulePolicy
     {
         $business = Filament::getTenant();
 
-        if (! $business) {
+        if (! $business instanceof Business || ! $this->access->canManageOperations($user, $business)) {
             return false;
         }
 
-        return $this->access->canManageOperations($user, $business) && $this->calendarQuery($user)->exists();
+        return $this->access->role($user, $business) === BusinessRole::Owner || $this->calendarQuery($user)->exists();
     }
 
     public function view(User $user, CalendarRule $rule): bool
     {
-        return $this->access->canManageCalendar($user, $rule->calendar);
+        return $this->canManageRuleCalendarInCurrentBusiness($user, $rule);
     }
 
     public function create(User $user): bool
     {
         $business = Filament::getTenant();
 
-        return $business && $this->access->canManageOperations($user, $business) && $this->calendarQuery($user)->exists();
+        return $business instanceof Business && $this->access->canManageOperations($user, $business)
+            && $this->calendarQuery($user)->exists();
     }
 
     public function update(User $user, CalendarRule $rule): bool
@@ -50,8 +53,18 @@ class CalendarRulePolicy
     {
         $business = Filament::getTenant();
 
-        return $business
+        return $business instanceof Business
             ? $this->access->calendars($user, $business)
             : AvailabilityCalendar::query()->whereRaw('1 = 0');
+    }
+
+    private function canManageRuleCalendarInCurrentBusiness(User $user, CalendarRule $rule): bool
+    {
+        $business = Filament::getTenant();
+        $calendar = $rule->calendar;
+
+        return $business instanceof Business && $calendar
+            && (string) $calendar->business_id === (string) $business->getKey()
+            && $this->access->canManageCalendar($user, $calendar);
     }
 }

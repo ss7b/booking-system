@@ -231,6 +231,15 @@ final class BusinessAccess
             ->where(fn ($query) => $query->whereIn('id', $locationCalendarIds)->orWhereIn('id', $staffCalendarIds));
     }
 
+    public function calendarsForManagement(User $user, Business $business): Builder
+    {
+        if ($this->role($user, $business) === BusinessRole::Owner) {
+            return $business->availabilityCalendars()->getQuery();
+        }
+
+        return $this->calendars($user, $business);
+    }
+
     public function canViewBooking(User $user, Booking $booking): bool
     {
         $business = $booking->business;
@@ -316,6 +325,19 @@ final class BusinessAccess
 
         return ! Location::query()->where('calendar_id', $calendar->getKey())->whereNotIn('id', $allowedLocations)->exists()
             && ! Staff::query()->where('calendar_id', $calendar->getKey())->whereNotIn('id', $allowedStaff)->exists();
+    }
+
+    public function canManageCalendarDefinition(User $user, Business $business, AvailabilityCalendar $calendar): bool
+    {
+        if ((string) $calendar->business_id !== (string) $business->getKey() || ! $this->canManageOperations($user, $business)) {
+            return false;
+        }
+
+        if ($this->role($user, $business) === BusinessRole::Owner) {
+            return $this->calendarsForManagement($user, $business)->whereKey($calendar->getKey())->exists();
+        }
+
+        return $this->canManageCalendar($user, $calendar);
     }
 
     public function canViewService(User $user, Service $service): bool

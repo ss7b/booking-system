@@ -368,6 +368,227 @@ class DetailedReportsTest extends TestCase
         $this->assertStringContainsString('Roster employee', $this->html($staffSection));
     }
 
+    public function test_period_comparison_uses_dashboard_cohorts_and_grouped_queries(): void
+    {
+        $now = CarbonImmutable::parse('2026-11-05 12:00:00', 'UTC');
+        $this->travelTo($now);
+        $business = $this->business('period-comparison-cohorts');
+        $branch = $this->branch($business, 'Riyadh branch');
+        $owner = $this->member($business, BusinessRole::Owner);
+        $currentService = $this->service($business, 'Current period service');
+        $previousService = $this->service($business, 'Previous period service');
+        $heldService = $this->service($business, 'Held-only service');
+
+        $this->booking($branch, 'comparison-current-confirmed-1', '2026-11-05 09:00:00', BookingStatus::Confirmed, $currentService);
+        $this->booking($branch, 'comparison-current-confirmed-2', '2026-11-05 09:30:00', BookingStatus::Confirmed, $currentService);
+        $this->booking($branch, 'comparison-current-completed', '2026-11-05 10:00:00', BookingStatus::Completed, $currentService);
+        $this->booking($branch, 'comparison-current-cancelled', '2026-11-05 10:30:00', BookingStatus::Cancelled, $currentService);
+        $this->booking($branch, 'comparison-current-held', '2026-11-05 11:00:00', BookingStatus::Held, $heldService, attributes: [
+            'hold_expires_at' => $now->addHour(),
+        ]);
+        $this->booking($branch, 'comparison-after-now', '2026-11-05 13:00:00', BookingStatus::Confirmed, $currentService);
+        $this->booking($branch, 'comparison-unconfirmed-cancelled', '2026-11-05 11:30:00', BookingStatus::Cancelled, $currentService, attributes: [
+            'confirmed_at' => null,
+        ]);
+        $this->booking($branch, 'comparison-previous-confirmed', '2026-11-04 09:00:00', BookingStatus::Confirmed, $previousService);
+        $this->booking($branch, 'comparison-previous-completed', '2026-11-04 10:00:00', BookingStatus::Completed, $previousService);
+        $this->booking($branch, 'comparison-previous-cancelled', '2026-11-04 11:00:00', BookingStatus::Cancelled, $previousService);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $comparison = app(BookingReports::class)->comparePeriods(
+                $owner,
+                $business,
+                $branch->getKey(),
+                ReportPeriod::Today->value,
+            );
+            $bookingQueries = array_values(array_filter(
+                DB::getQueryLog(),
+                fn (array $query): bool => preg_match('/\bfrom\s+`?bookings`?\b/i', $query['query']) === 1,
+            ));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertSame(4, $comparison['metrics']['total']['current']);
+        $this->assertSame(3, $comparison['metrics']['total']['previous']);
+        $this->assertSame(1, $comparison['metrics']['total']['difference']);
+        $this->assertSame(33.33, $comparison['metrics']['total']['change_percent']);
+        $this->assertSame('changed', $comparison['metrics']['total']['change_state']);
+        $this->assertSame(25.0, $comparison['metrics']['cancellation_rate']['current']);
+        $this->assertSame(33.33, $comparison['metrics']['cancellation_rate']['previous']);
+        $this->assertSame(-8.33, $comparison['metrics']['cancellation_rate']['difference']);
+        $this->assertSame(1, $comparison['active_held']['current']);
+        $this->assertSame(0, $comparison['active_held']['previous']);
+        $this->assertSame(4, $comparison['trend']['current'][0]);
+        $this->assertSame(3, $comparison['trend']['previous'][0]);
+        $this->assertSame([
+            [
+                'id' => (string) $currentService->getKey(),
+                'name' => 'Current period service',
+                'current' => 4,
+                'previous' => 0,
+                'difference' => 4,
+            ],
+            [
+                'id' => (string) $previousService->getKey(),
+                'name' => 'Previous period service',
+                'current' => 0,
+                'previous' => 3,
+                'difference' => -3,
+            ],
+        ], $comparison['services']);
+        $this->assertCount(4, $bookingQueries);
+        $this->assertCount(4, array_filter(
+            $bookingQueries,
+            fn (array $query): bool => preg_match('/\bgroup\s+by\b/i', $query['query']) === 1,
+        ));
+        $this->assertSame(10, Booking::query()->count());
+
+        $today = app(BookingReports::class)->overview(
+            $owner,
+            $business,
+            $branch->getKey(),
+            ReportRange::preset(ReportPeriod::Today),
+        );
+        $this->assertSame(5, $today['statistics']['total']);
+        $this->assertSame(4, $comparison['metrics']['total']['current']);
+        $this->assertNotSame($today['statistics']['total'], $comparison['metrics']['total']['current']);
+    }
+
+    public function test_period_comparison_explains_zero_baselines_and_requires_report_access_and_location_scope(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-11-05 12:00:00', 'UTC'));
+        $business = $this->business('period-comparison-access');
+        $allowedBranch = $this->branch($business, 'Allowed branch');
+        $otherBranch = $this->branch($business, 'Other branch');
+        $manager = $this->member($business, BusinessRole::Manager, [$allowedBranch]);
+        $service = $this->service($business, 'Zero baseline service');
+        $this->booking($allowedBranch, 'comparison-zero-baseline', '2026-11-05 09:00:00', BookingStatus::Confirmed, $service);
+
+        $comparison = app(BookingReports::class)->comparePeriods(
+            $manager,
+            $business,
+            $allowedBranch->getKey(),
+            ReportPeriod::Today->value,
+        );
+        $this->assertSame(1, $comparison['metrics']['total']['current']);
+        $this->assertSame(0, $comparison['metrics']['total']['previous']);
+        $this->assertNull($comparison['metrics']['total']['change_percent']);
+        $this->assertSame('no_previous', $comparison['metrics']['total']['change_state']);
+        $this->assertSame(0, $comparison['metrics']['completed']['previous']);
+        $this->assertSame(0.0, $comparison['metrics']['completed']['change_percent']);
+        $this->assertSame('both_zero', $comparison['metrics']['completed']['change_state']);
+
+        $this->expectException(AuthorizationException::class);
+        app(BookingReports::class)->comparePeriods(
+            $manager,
+            $business,
+            $otherBranch->getKey(),
+            ReportPeriod::Today->value,
+        );
+    }
+
+    public function test_period_comparison_queries_are_lazy_and_livewire_still_checks_report_access(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-11-05 12:00:00', 'UTC'));
+        $business = $this->business('period-comparison-lazy');
+        $branch = $this->branch($business, 'Main branch');
+        $owner = $this->member($business, BusinessRole::Owner);
+        $receptionist = $this->member($business, BusinessRole::Receptionist, [$branch]);
+        $this->booking($branch, 'comparison-lazy-booking', '2026-11-05 09:00:00');
+        $this->actingAs($owner, 'web');
+
+        $dashboard = $this->get($this->url($business))->assertOk();
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $reports = $this->update($this->snapshot($dashboard), [], 'selectTab', ['reports'])->assertOk();
+            $reportsSnapshot = $this->nextSnapshot($reports);
+            $inactiveComparisonQueries = array_filter(
+                DB::getQueryLog(),
+                fn (array $query): bool => str_contains(strtolower($query['query']), 'sum(case when bookings.status <>'),
+            );
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+        $this->assertEmpty($inactiveComparisonQueries);
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $reports = $this->update($reportsSnapshot, [], 'showSection', ['comparison'])->assertOk();
+            $comparisonSnapshot = $this->nextSnapshot($reports);
+            $comparisonQueries = array_values(array_filter(
+                DB::getQueryLog(),
+                fn (array $query): bool => str_contains(strtolower($query['query']), 'sum(case when bookings.status <>'),
+            ));
+        } finally {
+            DB::disableQueryLog();
+            DB::flushQueryLog();
+        }
+
+        $this->assertCount(2, $comparisonQueries);
+        $this->assertStringContainsString('مقارنة الفترات', $this->html($reports));
+        $this->assertStringContainsString('الفترتان محل المقارنة', $this->html($reports));
+        $this->assertStringContainsString('تنتهي المقارنة عند الوقت الموضح', $this->html($reports));
+        $dashboard->assertSee('lang="ar"', false)->assertSee('dir="rtl"', false);
+
+        $this->from($this->url($business))->post('/admin/locale', ['locale' => 'en'])
+            ->assertRedirect($this->url($business));
+        $englishPage = $this->get($this->url($business))->assertOk()
+            ->assertSee('lang="en"', false)
+            ->assertSee('dir="ltr"', false);
+        $englishComparison = $this->update(
+            $this->snapshot($englishPage),
+            [],
+            'showSection',
+            ['comparison'],
+        )->assertOk();
+        $this->assertStringContainsString('Compared periods', $this->html($englishComparison));
+        $this->assertStringContainsString(
+            'The Dashboard uses the full selected calendar period',
+            $this->html($englishComparison),
+        );
+
+        $this->actingAs($receptionist, 'web');
+        $this->update($comparisonSnapshot, [], 'showSection', ['comparison'])->assertForbidden();
+        $this->get(route('filament.admin.pages.dashboard', ['tenant' => $business, 'tab' => 'reports']))
+            ->assertForbidden();
+    }
+
+    public function test_custom_comparison_includes_local_start_and_excludes_each_end_boundary(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-11-07 12:00:00', 'UTC'));
+        $business = $this->business('period-comparison-boundaries');
+        $branch = $this->branch($business, 'Riyadh branch');
+        $owner = $this->member($business, BusinessRole::Owner);
+        $service = $this->service($business, 'Boundary service');
+        $this->booking($branch, 'comparison-current-start', '2026-11-04 21:00:00', service: $service);
+        $this->booking($branch, 'comparison-before-start', '2026-11-03 20:59:59', service: $service);
+        $this->booking($branch, 'comparison-current-end', '2026-11-05 21:00:00', service: $service);
+        $this->booking($branch, 'comparison-previous-start', '2026-11-03 21:00:00', service: $service);
+
+        $comparison = app(BookingReports::class)->comparePeriods(
+            $owner,
+            $business,
+            $branch->getKey(),
+            'custom',
+            '2026-11-05',
+            '2026-11-05',
+        );
+
+        $this->assertSame(1, $comparison['metrics']['total']['current']);
+        $this->assertSame(1, $comparison['metrics']['total']['previous']);
+        $this->assertSame(1, $comparison['trend']['current'][0]);
+        $this->assertSame(1, $comparison['trend']['previous'][0]);
+        $this->assertSame('2026-11-05T00:00:00+03:00', $comparison['window']->currentStart->toIso8601String());
+        $this->assertSame('2026-11-06T00:00:00+03:00', $comparison['window']->currentEnd->toIso8601String());
+    }
+
     public function test_custom_local_dates_are_inclusive_across_dst_and_rejected_when_invalid(): void
     {
         $this->travelTo(CarbonImmutable::parse('2026-03-09 12:00:00', 'UTC'));

@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Domain\Authorization\BusinessAccess;
+use App\Enums\BusinessRole;
 use App\Models\Business;
 use App\Models\Location;
 use App\Models\User;
@@ -17,12 +18,14 @@ class LocationPolicy
         $business = Filament::getTenant();
 
         return $business instanceof Business && $this->access->canManageBookings($user, $business)
-            && $this->access->locations($user, $business)->exists();
+            && ($this->access->role($user, $business) === BusinessRole::Owner
+                || $this->access->locations($user, $business)->exists());
     }
 
     public function view(User $user, Location $location): bool
     {
-        return $this->access->canViewLocation($user, $location);
+        return $this->belongsToCurrentBusiness($location)
+            && $this->access->canViewLocation($user, $location);
     }
 
     public function create(User $user): bool
@@ -34,12 +37,22 @@ class LocationPolicy
 
     public function update(User $user, Location $location): bool
     {
-        return $this->access->canManageLocation($user, $location);
+        return $this->belongsToCurrentBusiness($location)
+            && $this->access->canManageLocation($user, $location);
     }
 
     public function delete(User $user, Location $location): bool
     {
-        return $this->access->canManageBusinessSettings($user, $location->business)
+        return $this->belongsToCurrentBusiness($location)
+            && $this->access->canManageBusinessSettings($user, $location->business)
             && ! $location->bookings()->exists();
+    }
+
+    private function belongsToCurrentBusiness(Location $location): bool
+    {
+        $business = Filament::getTenant();
+
+        return $business instanceof Business
+            && (string) $location->business_id === (string) $business->getKey();
     }
 }

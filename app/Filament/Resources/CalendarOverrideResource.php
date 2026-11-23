@@ -5,7 +5,10 @@ namespace App\Filament\Resources;
 use App\Domain\Authorization\BusinessAccess;
 use App\Filament\Resources\CalendarOverrideResource\Pages\ManageCalendarOverrides;
 use App\Filament\Resources\Concerns\TranslatesResourceLabels;
+use App\Models\Business;
 use App\Models\CalendarOverride;
+use App\Models\User;
+use App\Rules\AccessibleCalendarId;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -43,7 +46,8 @@ class CalendarOverrideResource extends Resource
             ->schema([
                 Forms\Components\Select::make('calendar_id')
                     ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
-                    ->searchable()->required(),
+                    ->searchable()->required()
+                    ->rules([AccessibleCalendarId::forScheduling()]),
                 Forms\Components\DatePicker::make('date')->required(),
                 Forms\Components\Select::make('mode')->options([
                     'open' => __('Open'),
@@ -72,6 +76,17 @@ class CalendarOverrideResource extends Resource
                 'open' => __('Open'),
                 'closed' => __('Closed'),
             ])])
+            ->emptyStateHeading(__('resources.calendar_override.empty_state.heading'))
+            ->emptyStateDescription(fn (): ?string => static::hasAccessibleCalendars()
+                ? __('resources.calendar_override.empty_state.description')
+                : __('resources.calendar_override.empty_state.no_calendar'))
+            ->emptyStateActions([
+                Tables\Actions\Action::make('manage_calendars')
+                    ->label(__('resources.calendar_override.empty_state.manage_calendars'))
+                    ->icon('heroicon-o-calendar')
+                    ->url(fn (): string => AvailabilityCalendarResource::getUrl('index'))
+                    ->visible(fn (): bool => static::canManageCalendars()),
+            ])
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make(),
@@ -83,5 +98,23 @@ class CalendarOverrideResource extends Resource
         return [
             'index' => ManageCalendarOverrides::route('/'),
         ];
+    }
+
+    private static function hasAccessibleCalendars(): bool
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        return $business instanceof Business && $user instanceof User
+            && app(BusinessAccess::class)->calendars($user, $business)->exists();
+    }
+
+    private static function canManageCalendars(): bool
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        return $business instanceof Business && $user instanceof User
+            && app(BusinessAccess::class)->canManageBusinessSettings($user, $business);
     }
 }

@@ -50,6 +50,9 @@ class AdminPanelProvider extends PanelProvider
                 Route::post('/reports/export/{section}', ExportReportController::class)
                     ->whereIn('section', ['bookings', 'services', 'staff'])
                     ->name('reports.export');
+                Route::post('/reports/export/{section}/pdf', [ExportReportController::class, 'pdf'])
+                    ->whereIn('section', ['bookings', 'services', 'staff'])
+                    ->name('reports.export.pdf');
             })
             ->renderHook(
                 PanelsRenderHook::GLOBAL_SEARCH_AFTER,

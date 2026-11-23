@@ -12,7 +12,7 @@ use Livewire\Attributes\Locked;
 
 trait InteractsWithDetailedReports
 {
-    private const REPORT_SECTIONS = ['bookings', 'services', 'staff'];
+    private const REPORT_SECTIONS = ['bookings', 'services', 'staff', 'comparison'];
 
     private const BOOKING_COLUMNS = ['reference', 'starts_at', 'service', 'staff', 'customer', 'status'];
 
@@ -77,6 +77,14 @@ trait InteractsWithDetailedReports
                 'staff' => ['rows' => $reports->staff(
                     $user, $business, $this->branchId, $range, perPage: 15, page: $this->reportPageNumber('staffPage'),
                 )->setPageName('staffPage')],
+                'comparison' => ['comparison' => $reports->comparePeriods(
+                    $user,
+                    $business,
+                    $this->branchId,
+                    $this->period,
+                    $this->startDate,
+                    $this->endDate,
+                )],
             },
         ];
     }

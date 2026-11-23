@@ -7,6 +7,7 @@ use App\Filament\Resources\StaffResource\Pages\ManageStaff;
 use App\Models\Business;
 use App\Models\Staff;
 use App\Models\User;
+use App\Rules\AccessibleCalendarId;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -52,8 +53,20 @@ class StaffResource extends TenantResource
                 ])->required()->default('active'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
-                    ->searchable()->nullable(),
+                    ->options(function (): array {
+                        $business = Filament::getTenant();
+                        $user = Filament::auth()->user();
+
+                        if (! $business instanceof Business || ! $user instanceof User) {
+                            return [];
+                        }
+
+                        return app(BusinessAccess::class)
+                            ->calendarsForManagement($user, $business)
+                            ->orderBy('name')->pluck('name', 'id')->all();
+                    })
+                    ->searchable()->nullable()
+                    ->rules([AccessibleCalendarId::forManagement()]),
                 Forms\Components\Select::make('services')
                     ->relationship('services', 'name', modifyQueryUsing: fn ($query) => $query->whereIn('services.id', app(BusinessAccess::class)->services(Filament::auth()->user(), Filament::getTenant())->select('id')))
                     ->multiple()->preload(),

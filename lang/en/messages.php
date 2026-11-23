@@ -24,6 +24,7 @@ return [
     'staff_has_bookings' => 'This staff member has bookings or blocks and cannot be deleted.',
     'calendar_has_rules' => 'This availability calendar has rules or overrides and cannot be deleted.',
     'calendar_rule_exists' => 'This exact calendar rule already exists.',
+    'calendar_unavailable' => 'Choose an availability calendar you are authorized to manage in this business.',
     'locations_unauthorized' => 'Choose only locations you are authorized to manage in this business.',
     'booking_mode_change_blocked' => 'Booking mode cannot change while active future bookings or holds exist.',
     'capacity_below_occupancy' => 'Capacity cannot be lower than current future peak occupancy.',

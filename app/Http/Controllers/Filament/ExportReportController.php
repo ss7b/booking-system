@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Filament;
 
 use App\Domain\Reports\BookingReports;
 use App\Domain\Reports\ReportExcelExporter;
+use App\Domain\Reports\ReportPdfExporter;
 use App\Domain\Reports\ReportPeriod;
 use App\Domain\Reports\ReportRange;
 use App\Models\Business;
+use App\Models\Location;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
@@ -26,6 +29,36 @@ final class ExportReportController
         BookingReports $reports,
         ReportExcelExporter $exporter,
     ): StreamedResponse {
+        [$user, $business, $location, $range, $search] = $this->exportContext($request, $tenant, $section, $reports);
+
+        return $exporter->download($user, $business, $location, $section, $range, $search);
+    }
+
+    public function pdf(
+        Request $request,
+        string $tenant,
+        string $section,
+        BookingReports $reports,
+        ReportPdfExporter $exporter,
+    ): Response {
+        [$user, $business, $location, $range, $search] = $this->exportContext($request, $tenant, $section, $reports);
+        $timezone = $location->timezone ?: ($business->timezone ?: config('app.timezone'));
+        $filename = 'reports-'.$section.'-'.now($timezone)->format('Ymd-His').'.pdf';
+        $pdf = $exporter->render($user, $business, $location, $section, $range, $search);
+
+        return response($pdf, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+            'Content-Language' => app()->getLocale(),
+            'Cache-Control' => 'private, no-store, max-age=0',
+            'Pragma' => 'no-cache',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /** @return array{User, Business, Location, ReportRange, ?string} */
+    private function exportContext(Request $request, string $tenant, string $section, BookingReports $reports): array
+    {
         abort_unless(in_array($section, ['bookings', 'services', 'staff'], true), 404);
 
         $business = Filament::getTenant();
@@ -55,7 +88,7 @@ final class ExportReportController
         $location = $reports->locations($user, $business)
             ->whereKey($filters['branch_id'])
             ->first(['locations.id', 'locations.name', 'locations.timezone']);
-        abort_unless($location !== null, 404);
+        abort_unless($location instanceof Location, 404);
 
         try {
             $range = $filters['period'] === 'custom'
@@ -67,13 +100,12 @@ final class ExportReportController
             ]);
         }
 
-        return $exporter->download(
+        return [
             $user,
             $business,
             $location,
-            $section,
             $range,
             $section === 'bookings' ? ($filters['search'] ?? null) : null,
-        );
+        ];
     }
 }

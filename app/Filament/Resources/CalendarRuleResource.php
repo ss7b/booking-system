@@ -6,7 +6,10 @@ use App\Domain\Authorization\BusinessAccess;
 use App\Domain\Authorization\BusinessMembershipRequestContext;
 use App\Filament\Resources\CalendarRuleResource\Pages\ManageCalendarRules;
 use App\Filament\Resources\Concerns\TranslatesResourceLabels;
+use App\Models\Business;
 use App\Models\CalendarRule;
+use App\Models\User;
+use App\Rules\AccessibleCalendarId;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -47,7 +50,8 @@ class CalendarRuleResource extends Resource
             ->schema([
                 Forms\Components\Select::make('calendar_id')
                     ->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))
-                    ->searchable()->required(),
+                    ->searchable()->required()
+                    ->rules([AccessibleCalendarId::forScheduling()]),
                 Forms\Components\Select::make('day_of_week')->options([
                     0 => __('calendars.weekdays.sunday'),
                     1 => __('calendars.weekdays.monday'),
@@ -90,6 +94,17 @@ class CalendarRuleResource extends Resource
                 Tables\Columns\TextColumn::make('end_time')->time('H:i'),
             ])
             ->filters([Tables\Filters\SelectFilter::make('calendar_id')->options(fn () => app(BusinessAccess::class)->calendars(Filament::auth()->user(), Filament::getTenant())->orderBy('name')->pluck('name', 'id'))])
+            ->emptyStateHeading(__('resources.calendar_rule.empty_state.heading'))
+            ->emptyStateDescription(fn (): ?string => static::hasAccessibleCalendars()
+                ? __('resources.calendar_rule.empty_state.description')
+                : __('resources.calendar_rule.empty_state.no_calendar'))
+            ->emptyStateActions([
+                Tables\Actions\Action::make('manage_calendars')
+                    ->label(__('resources.calendar_rule.empty_state.manage_calendars'))
+                    ->icon('heroicon-o-calendar')
+                    ->url(fn (): string => AvailabilityCalendarResource::getUrl('index'))
+                    ->visible(fn (): bool => static::canManageCalendars()),
+            ])
             ->actions([
                 Tables\Actions\EditAction::make()->modalHeading(__('filament-actions::edit.single.label')),
                 Tables\Actions\DeleteAction::make()->modalHeading(__('filament-actions::delete.single.label')),
@@ -101,5 +116,23 @@ class CalendarRuleResource extends Resource
         return [
             'index' => ManageCalendarRules::route('/'),
         ];
+    }
+
+    private static function hasAccessibleCalendars(): bool
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        return $business instanceof Business && $user instanceof User
+            && app(BusinessAccess::class)->calendars($user, $business)->exists();
+    }
+
+    private static function canManageCalendars(): bool
+    {
+        $business = Filament::getTenant();
+        $user = Filament::auth()->user();
+
+        return $business instanceof Business && $user instanceof User
+            && app(BusinessAccess::class)->canManageBusinessSettings($user, $business);
     }
 }

@@ -4,7 +4,10 @@ namespace App\Filament\Resources;
 
 use App\Domain\Authorization\BusinessAccess;
 use App\Filament\Resources\LocationResource\Pages\ManageLocations;
+use App\Models\Business;
 use App\Models\Location;
+use App\Models\User;
+use App\Rules\AccessibleCalendarId;
 use Filament\Facades\Filament;
 use Filament\Forms;
 use Filament\Forms\Form;
@@ -32,11 +35,21 @@ class LocationResource extends TenantResource
                 Forms\Components\TextInput::make('timezone')->maxLength(64)->placeholder('Asia/Riyadh'),
                 Forms\Components\Select::make('calendar_id')
                     ->label('Availability calendar')
-                    ->options(fn () => app(BusinessAccess::class)
-                        ->calendars(Filament::auth()->user(), Filament::getTenant())
-                        ->orderBy('name')->pluck('name', 'id'))
+                    ->options(function (): array {
+                        $business = Filament::getTenant();
+                        $user = Filament::auth()->user();
+
+                        if (! $business instanceof Business || ! $user instanceof User) {
+                            return [];
+                        }
+
+                        return app(BusinessAccess::class)
+                            ->calendarsForManagement($user, $business)
+                            ->orderBy('name')->pluck('name', 'id')->all();
+                    })
                     ->searchable()
-                    ->nullable(),
+                    ->nullable()
+                    ->rules([AccessibleCalendarId::forManagement()]),
                 Forms\Components\Textarea::make('address')->columnSpanFull(),
                 Forms\Components\TextInput::make('phone')->tel()->maxLength(50),
                 Forms\Components\Toggle::make('is_active')->default(true),
@@ -53,6 +66,8 @@ class LocationResource extends TenantResource
                 Tables\Columns\IconColumn::make('is_active')->boolean(),
             ])
             ->filters([Tables\Filters\TernaryFilter::make('is_active')])
+            ->emptyStateDescription(__('resources.location.empty_state.description'))
+            ->emptyStateActions([Tables\Actions\CreateAction::make()])
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()

@@ -17,21 +17,33 @@
             </x-filament::tabs>
         </div>
 
-        <form method="POST" action="{{ route('filament.admin.reports.export', ['tenant' => $business, 'section' => $section]) }}">
-            @csrf
-            <input type="hidden" name="branch_id" value="{{ $branchId }}">
-            <input type="hidden" name="period" value="{{ $period }}">
-            @if ($period === 'custom')
-                <input type="hidden" name="start_date" value="{{ $startDate }}">
-                <input type="hidden" name="end_date" value="{{ $endDate }}">
-            @endif
-            @if ($section === 'bookings' && $appliedSearch !== '')
-                <input type="hidden" name="search" value="{{ $appliedSearch }}">
-            @endif
-            <x-filament::button type="submit" icon="heroicon-m-arrow-down-tray">
-                {{ __('reports.exports.button') }}
-            </x-filament::button>
-        </form>
+        @if (in_array($section, ['bookings', 'services', 'staff'], true))
+            <form method="POST" action="{{ route('filament.admin.reports.export', ['tenant' => $business, 'section' => $section]) }}" class="flex flex-wrap items-center gap-2">
+                @csrf
+                <input type="hidden" name="branch_id" value="{{ $branchId }}">
+                <input type="hidden" name="period" value="{{ $period }}">
+                @if ($period === 'custom')
+                    <input type="hidden" name="start_date" value="{{ $startDate }}">
+                    <input type="hidden" name="end_date" value="{{ $endDate }}">
+                @endif
+                @if ($section === 'bookings' && $appliedSearch !== '')
+                    <input type="hidden" name="search" value="{{ $appliedSearch }}">
+                @endif
+                <x-filament::button type="submit" icon="heroicon-m-arrow-down-tray">
+                    {{ __('reports.exports.button') }}
+                </x-filament::button>
+                <x-filament::button
+                    type="submit"
+                    color="gray"
+                    icon="heroicon-m-document-arrow-down"
+                    :formaction="route('filament.admin.reports.export.pdf', ['tenant' => $business, 'section' => $section])"
+                    wire:loading.attr="disabled"
+                    wire:target="applyFilters,showSection,searchBookings"
+                >
+                    {{ __('reports.exports.pdf_button') }}
+                </x-filament::button>
+            </form>
+        @endif
     </div>
 
     @php
@@ -45,7 +57,15 @@
         {{ __('reports.filters.active', ['branch' => $branches[$branchId], 'period' => $activePeriod]) }}
     </p>
 
-    @if ($section === 'bookings')
+    @if ($section === 'comparison')
+        @include('filament.pages.reports.comparison', [
+            'comparison' => $result['comparison'],
+            'branchName' => $branches[$branchId],
+            'period' => $period,
+            'startDate' => $startDate,
+            'endDate' => $endDate,
+        ])
+    @elseif ($section === 'bookings')
         @include('filament.pages.reports.booking-summary', ['overview' => $result['overview'], 'days' => $result['days']])
         @include('filament.pages.reports.booking-table', ['rows' => $result['rows'], 'bookingListUrl' => $result['bookingListUrl']])
     @else

@@ -63,7 +63,7 @@ abstract class TenantResource extends Resource
         }
 
         if ($model === AvailabilityCalendar::class) {
-            return $access->calendars($user, $tenant);
+            return $access->calendarsForManagement($user, $tenant);
         }
 
         return $query;

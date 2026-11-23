@@ -12,6 +12,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Gate;
@@ -20,6 +21,8 @@ use Illuminate\Support\LazyCollection;
 final class BookingReports
 {
     public const VIEW = 'reports.view';
+
+    public const PDF_MAX_ROWS = 200;
 
     public function __construct(private readonly BusinessAccess $access) {}
 
@@ -83,6 +86,61 @@ final class BookingReports
         [$bookings, , $now, $start, $end] = $this->scopedReport($user, $business, $locationId, $range);
 
         return $this->aggregateOverview($bookings, $start, $end, $now);
+    }
+
+    public function comparePeriods(
+        User $user,
+        Business $business,
+        string $locationId,
+        string $period,
+        ?string $startDate = null,
+        ?string $endDate = null,
+    ): array {
+        $locations = $this->locations($user, $business)->whereKey($locationId);
+        $location = (clone $locations)->first(['locations.id', 'locations.timezone']);
+        if ($location === null) {
+            throw new AuthorizationException;
+        }
+
+        $timezone = $location->timezone ?: ($business->timezone ?: config('app.timezone'));
+        $now = now($timezone)->toImmutable();
+        $window = PeriodComparisonWindow::fromFilters($period, $startDate, $endDate, $now);
+        $currentBookings = $this->bookingsWithin($business, $locations, $window->currentStart, $window->currentEnd);
+        $previousBookings = $this->bookingsWithin($business, $locations, $window->previousStart, $window->previousEnd);
+        $currentOverview = $this->aggregateOverview(
+            $currentBookings,
+            $window->currentStart,
+            $window->currentEnd,
+            $now,
+            includeTrend: $window->chartable,
+        );
+        $previousOverview = $this->aggregateOverview(
+            $previousBookings,
+            $window->previousStart,
+            $window->previousEnd,
+            $now,
+            includeTrend: $window->chartable,
+        );
+        $currentServices = $this->topServiceRows($currentBookings, $now);
+        $previousServices = $this->topServiceRows($previousBookings, $now);
+
+        return [
+            'window' => $window,
+            'current' => $currentOverview,
+            'previous' => $previousOverview,
+            'metrics' => $this->compareStatistics(
+                $currentOverview['statistics'],
+                $previousOverview['statistics'],
+            ),
+            'active_held' => [
+                'current' => $currentOverview['statistics']['pending'],
+                'previous' => $previousOverview['statistics']['pending'],
+            ],
+            'trend' => $window->chartable
+                ? $this->alignedTrend($currentOverview['trend'], $previousOverview['trend'], $window)
+                : null,
+            'services' => $this->mergeServiceRows($currentServices, $previousServices),
+        ];
     }
 
     public function services(
@@ -170,8 +228,7 @@ final class BookingReports
     ): LazyCollection {
         [$bookings, , $now] = $this->scopedReport($user, $business, $locationId, $range);
 
-        return $this->bookingDetailsQuery($bookings, $now, $search, 'starts_at', 'asc')
-            ->reorder('bookings.id')
+        return $this->bookingExportQuery($bookings, $now, $search)
             ->lazyById(500, 'bookings.id', 'id');
     }
 
@@ -186,15 +243,73 @@ final class BookingReports
         string $dimension,
     ): LazyCollection {
         [$bookings, , $now] = $this->scopedReport($user, $business, $locationId, $range);
+
+        return $this->breakdownExportQuery($bookings, $now, $dimension)
+            ->lazy(500)
+            ->map(fn (object $row): array => $this->formatBreakdownRow($row));
+    }
+
+    /**
+     * @return array{
+     *     location: Location,
+     *     start: CarbonImmutable,
+     *     end: CarbonImmutable,
+     *     generated_at: CarbonImmutable,
+     *     statistics: array{total: int, confirmed: int, completed: int, cancelled: int, pending: int, cancellation_rate: float},
+     *     rows: list<Booking>|list<array{id: ?string, name: ?string, total: int, confirmed: int, checked_in: int, completed: int, cancelled: int, no_show: int, pending: int, cancellation_rate: float}>,
+     *     detailsOmitted: bool,
+     * }
+     */
+    public function forPdf(
+        User $user,
+        Business $business,
+        string $locationId,
+        ReportRange $range,
+        string $section,
+        ?string $search = null,
+    ): array {
+        [$bookings, $location, $now, $start, $end] = $this->scopedReport($user, $business, $locationId, $range);
+
+        // Read one extra row to distinguish a complete table from a summary-only export.
+        $rows = ($section === 'bookings'
+            ? $this->bookingExportQuery(clone $bookings, $now, $search)
+            : $this->breakdownExportQuery(clone $bookings, $now, $section))
+            ->limit(self::PDF_MAX_ROWS + 1)
+            ->get();
+        $detailsOmitted = $rows->count() > self::PDF_MAX_ROWS;
+
+        return [
+            'location' => $location,
+            'start' => $start,
+            'end' => $end,
+            'generated_at' => $now,
+            'statistics' => $this->aggregateOverview($bookings, $start, $end, $now, includeTrend: false)['statistics'],
+            'rows' => match (true) {
+                $detailsOmitted => [],
+                $section === 'bookings' => $rows->all(),
+                default => $rows->map(fn (object $row): array => $this->formatBreakdownRow($row))->all(),
+            },
+            'detailsOmitted' => $detailsOmitted,
+        ];
+    }
+
+    /** @param Builder<Booking> $bookings */
+    private function bookingExportQuery(Builder $bookings, CarbonImmutable $now, ?string $search): Builder
+    {
+        return $this->bookingDetailsQuery($bookings, $now, $search, 'starts_at', 'asc')
+            ->reorder('bookings.id');
+    }
+
+    /** @param Builder<Booking> $bookings */
+    private function breakdownExportQuery(Builder $bookings, CarbonImmutable $now, string $dimension): QueryBuilder
+    {
         [$table, $foreignKey] = match ($dimension) {
             'services' => ['services', 'service_id'],
             'staff' => ['staff', 'staff_id'],
             default => throw new \InvalidArgumentException('Unsupported report dimension.'),
         };
 
-        return $this->breakdownQuery($this->reportableBookings($bookings, $now), $table, $foreignKey, 'total', 'desc')
-            ->lazy(500)
-            ->map(fn (object $row): array => $this->formatBreakdownRow($row));
+        return $this->breakdownQuery($this->reportableBookings($bookings, $now), $table, $foreignKey, 'total', 'desc');
     }
 
     /**
@@ -271,13 +386,25 @@ final class BookingReports
         $now = now($timezone)->toImmutable();
         [$start, $end] = $range->bounds($now);
 
-        $bookings = Booking::query()
+        $bookings = $this->bookingsWithin($business, $locations, $start, $end);
+
+        return [$bookings, $location, $now, $start, $end];
+    }
+
+    /** @param Builder<Location> $locations
+     * @return Builder<Booking>
+     */
+    private function bookingsWithin(
+        Business $business,
+        Builder $locations,
+        CarbonImmutable $start,
+        CarbonImmutable $end,
+    ): Builder {
+        return Booking::query()
             ->where('bookings.business_id', $business->getKey())
             ->whereIn('bookings.location_id', $locations->select('locations.id'))
             ->where('bookings.starts_at', '>=', $start->utc())
             ->where('bookings.starts_at', '<', $end->utc());
-
-        return [$bookings, $location, $now, $start, $end];
     }
 
     /** @param Builder<Booking> $bookings */
@@ -306,32 +433,38 @@ final class BookingReports
     }
 
     /** @param Builder<Booking> $bookings */
-    private function aggregateOverview(Builder $bookings, CarbonImmutable $start, CarbonImmutable $end, CarbonImmutable $now): array
-    {
+    private function aggregateOverview(
+        Builder $bookings,
+        CarbonImmutable $start,
+        CarbonImmutable $end,
+        CarbonImmutable $now,
+        bool $includeTrend = true,
+    ): array {
         $trend = [];
 
         // Keep quiet days visible for short ranges and keep long ranges sparse.
-        if ($end <= $start->addDays(366)->startOfDay()) {
+        if ($includeTrend && $end <= $start->addDays(366)->startOfDay()) {
             for ($day = $start; $day < $end; $day = $day->addDay()->startOfDay()) {
                 $trend[$day->toDateString()] = 0;
             }
         }
 
-        [$bookingDaySql, $bindings] = $this->bookingDaySql($start, $end);
-        $rows = $this->reportableBookings(clone $bookings, $now)
+        $query = $this->reportableBookings(clone $bookings, $now)
             ->toBase()
-            ->select('bookings.status')
-            ->selectRaw($bookingDaySql.' AS booking_day', $bindings)
-            ->selectRaw('COUNT(*) AS booking_count')
-            ->groupBy('booking_day', 'bookings.status')
-            ->orderBy('booking_day')
-            ->get();
+            ->select('bookings.status');
+        if ($includeTrend) {
+            [$bookingDaySql, $bindings] = $this->bookingDaySql($start, $end);
+            $query->selectRaw($bookingDaySql.' AS booking_day', $bindings)
+                ->groupBy('booking_day')
+                ->orderBy('booking_day');
+        }
+        $query->selectRaw('COUNT(*) AS booking_count')->groupBy('bookings.status');
 
         $statuses = array_fill_keys(array_column(BookingStatus::cases(), 'value'), 0);
         unset($statuses[BookingStatus::Expired->value]);
-        foreach ($rows as $row) {
+        foreach ($query->get() as $row) {
             $count = (int) $row->booking_count;
-            if ($row->status !== BookingStatus::Held->value) {
+            if ($includeTrend && $row->status !== BookingStatus::Held->value) {
                 $trend[$row->booking_day] = ($trend[$row->booking_day] ?? 0) + $count;
             }
             $statuses[$row->status] += $count;
@@ -409,7 +542,7 @@ final class BookingReports
         string $sort,
         string $direction,
         ?string $search = null,
-    ): \Illuminate\Database\Query\Builder {
+    ): QueryBuilder {
         $id = "bookings.$foreignKey";
         $name = "$table.name";
         $search = trim($search ?? '');
@@ -463,6 +596,113 @@ final class BookingReports
             'no_show' => (int) $row->no_show,
             'pending' => (int) $row->pending,
             'cancellation_rate' => (float) $row->cancellation_rate,
+        ];
+    }
+
+    /** @param Builder<Booking> $bookings
+     * @return list<array{id: string, name: string, total: int}>
+     */
+    private function topServiceRows(Builder $bookings, CarbonImmutable $now): array
+    {
+        return $this->breakdownQuery(
+            $this->reportableBookings($bookings, $now),
+            'services',
+            'service_id',
+            'total',
+            'desc',
+        )
+            ->havingRaw('SUM(CASE WHEN bookings.status <> ? THEN 1 ELSE 0 END) > 0', [BookingStatus::Held->value])
+            ->limit(10)
+            ->get()
+            ->map(static fn (object $row): array => [
+                'id' => (string) $row->dimension_id,
+                'name' => (string) ($row->name ?? ''),
+                'total' => (int) $row->total,
+            ])
+            ->all();
+    }
+
+    private function mergeServiceRows(array $current, array $previous): array
+    {
+        $rows = [];
+        foreach (['current' => $current, 'previous' => $previous] as $period => $services) {
+            foreach ($services as $service) {
+                $id = $service['id'];
+                $rows[$id] ??= [
+                    'id' => $id,
+                    'name' => $service['name'],
+                    'current' => 0,
+                    'previous' => 0,
+                ];
+                $rows[$id][$period] = $service['total'];
+            }
+        }
+
+        foreach ($rows as &$row) {
+            $row['difference'] = $row['current'] - $row['previous'];
+        }
+        unset($row);
+
+        $rows = array_values($rows);
+        usort($rows, static fn (array $left, array $right): int => ($right['current'] + $right['previous'])
+            <=> ($left['current'] + $left['previous']));
+
+        return $rows;
+    }
+
+    private function compareStatistics(array $current, array $previous): array
+    {
+        $metrics = [];
+        foreach (['total', 'confirmed', 'completed', 'cancelled'] as $metric) {
+            $metrics[$metric] = $this->countComparison($current[$metric], $previous[$metric]);
+        }
+
+        $metrics['cancellation_rate'] = [
+            'current' => $current['cancellation_rate'],
+            'previous' => $previous['cancellation_rate'],
+            'difference' => round($current['cancellation_rate'] - $previous['cancellation_rate'], 2),
+        ];
+
+        return $metrics;
+    }
+
+    private function countComparison(int $current, int $previous): array
+    {
+        return [
+            'current' => $current,
+            'previous' => $previous,
+            'difference' => $current - $previous,
+            'change_percent' => match (true) {
+                $previous > 0 => round(100 * ($current - $previous) / $previous, 2),
+                $current > 0 => null,
+                default => 0.0,
+            },
+            'change_state' => match (true) {
+                $previous > 0 => 'changed',
+                $current > 0 => 'no_previous',
+                default => 'both_zero',
+            },
+        ];
+    }
+
+    private function alignedTrend(
+        array $current,
+        array $previous,
+        PeriodComparisonWindow $window,
+    ): array {
+        $labels = $currentCounts = $previousCounts = [];
+        for ($offset = 0; $offset < $window->currentDays; $offset++) {
+            $labels[] = $offset + 1;
+            $currentDate = $window->currentStart->addDays($offset)->toDateString();
+            $previousDate = $window->previousStart->addDays($offset)->toDateString();
+            $currentCounts[] = $current[$currentDate] ?? 0;
+            $previousCounts[] = $previous[$previousDate] ?? 0;
+        }
+
+        return [
+            'labels' => $labels,
+            'current' => $currentCounts,
+            'previous' => $previousCounts,
         ];
     }
 

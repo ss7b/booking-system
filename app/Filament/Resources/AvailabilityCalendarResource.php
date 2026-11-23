@@ -41,6 +41,8 @@ class AvailabilityCalendarResource extends TenantResource
                 Tables\Columns\TextColumn::make('overrides_count')->counts('overrides')->label('Date overrides'),
             ])
             ->filters([])
+            ->emptyStateDescription(__('resources.availability_calendar.empty_state.description'))
+            ->emptyStateActions([Tables\Actions\CreateAction::make()])
             ->actions([
                 Tables\Actions\EditAction::make(),
                 Tables\Actions\DeleteAction::make()->visible(fn (AvailabilityCalendar $record): bool => (int) $record->rules_count === 0 && (int) $record->overrides_count === 0)

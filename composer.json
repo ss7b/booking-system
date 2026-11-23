@@ -12,6 +12,7 @@
         "laravel/horizon": "^5.50",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.10.1",
+        "mpdf/mpdf": "~8.2.0",
         "openspout/openspout": "^4.23",
         "predis/predis": "^2.3",
         "saade/filament-fullcalendar": "^3.0"

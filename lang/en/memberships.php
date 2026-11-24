@@ -1,7 +1,20 @@
 <?php
 
 return [
-    'title' => 'Memberships',
+    'title' => 'Manage Business Memberships',
+    'heading' => 'Manage Business Memberships',
+    'description' => 'Manage users and permissions within the current business.',
+    'add_member' => 'Add Member',
+    'edit_member' => 'Edit Member',
+    'remove_member' => 'Remove Member',
+    'email' => 'Email',
+    'staff' => 'Linked Staff',
+    'assigned_branches' => 'Assigned branches',
+    'new_name' => 'New user name',
+    'new_email' => 'New user email',
+    'new_password' => 'New user password',
+    'empty_heading' => 'No business members',
+    'empty_description' => 'Add a member to assign roles and branch access.',
     'user' => 'User',
     'role' => 'Role',
     'branch_access' => 'Branch access',

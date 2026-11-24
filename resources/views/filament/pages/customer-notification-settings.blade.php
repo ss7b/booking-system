@@ -76,7 +76,7 @@
                                     </label>
                                     <label class="block space-y-1 text-sm">
                                         <span>{{ __('notifications.settings.smtp_password') }}</span>
-                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.email.password" :placeholder="__('notifications.settings.keep_password')" autocomplete="new-password" /></x-filament::input.wrapper>
+                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.email.password" placeholder="{{ __('notifications.settings.keep_password') }}" autocomplete="new-password" /></x-filament::input.wrapper>
                                         @error('credentials.email.password')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <div class="grid gap-3 sm:grid-cols-2">
@@ -98,7 +98,7 @@
                                     </label>
                                     <label class="block space-y-1 text-sm">
                                         <span>{{ __('notifications.settings.auth_token') }}</span>
-                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.{{ $channel }}.auth_token" :placeholder="__('notifications.settings.keep_token')" autocomplete="new-password" /></x-filament::input.wrapper>
+                                        <x-filament::input.wrapper><x-filament::input type="password" dir="ltr" wire:model="credentials.{{ $channel }}.auth_token" placeholder="{{ __('notifications.settings.keep_token') }}" autocomplete="new-password" /></x-filament::input.wrapper>
                                         @error('credentials.'.$channel.'.auth_token')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                     </label>
                                     <label class="block space-y-1 text-sm">
@@ -184,7 +184,7 @@
                                             @if ($channel === 'email')
                                                 <label class="block space-y-1 text-sm">
                                                     <span>{{ __('notifications.settings.email_subject') }}</span>
-                                                    <x-filament::input.wrapper><x-filament::input type="text" wire:model="templates.{{ $formEvent }}.{{ $channel }}.subject" :placeholder="__('notifications.settings.subject')" /></x-filament::input.wrapper>
+                                                    <x-filament::input.wrapper><x-filament::input type="text" wire:model="templates.{{ $formEvent }}.{{ $channel }}.subject" placeholder="{{ __('notifications.settings.subject') }}" /></x-filament::input.wrapper>
                                                     @error('templates.'.$formEvent.'.'.$channel.'.subject')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                                 </label>
                                             @endif
@@ -197,7 +197,7 @@
                                             @endif
                                             <label class="block space-y-1 text-sm">
                                                 <span>{{ __('notifications.settings.message_body') }}</span>
-                                                <textarea wire:model="templates.{{ $formEvent }}.{{ $channel }}.body" rows="3" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950" :placeholder="__('notifications.settings.message_body')"></textarea>
+                                                <textarea wire:model="templates.{{ $formEvent }}.{{ $channel }}.body" rows="3" class="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950" placeholder="{{ __('notifications.settings.message_body') }}"></textarea>
                                                 @error('templates.'.$formEvent.'.'.$channel.'.body')<span class="text-xs text-danger-600">{{ $message }}</span>@enderror
                                             </label>
                                         </div>
@@ -221,86 +221,12 @@
     </form>
 
     <section class="space-y-4 border-t border-gray-200 pt-6 dark:border-gray-700">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-            <div>
-                <h2 class="text-lg font-semibold">{{ __('notifications.settings.recent') }}</h2>
-                <p class="text-sm text-gray-500">{{ __('notifications.settings.delivery_states') }}</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-                <label class="sr-only" for="notification-status-filter">{{ __('notifications.settings.filter_status') }}</label>
-                <select id="notification-status-filter" wire:model.live="historyStatus" class="rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                    <option value="">{{ __('notifications.settings.all_statuses') }}</option>
-                    @foreach ($historyStatuses as $status)
-                        <option value="{{ $status }}">{{ __('notifications.provider_statuses.'.$status) }}</option>
-                    @endforeach
-                </select>
-                <label class="sr-only" for="notification-event-filter">{{ __('notifications.settings.filter_event') }}</label>
-                <select id="notification-event-filter" wire:model.live="historyEvent" class="rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-600 focus:ring-primary-600 dark:border-gray-700 dark:bg-gray-950">
-                    <option value="">{{ __('notifications.settings.all_events') }}</option>
-                    @foreach ($historyEvents as $event)
-                        <option value="{{ $event }}">{{ __('notifications.events.'.str_replace('.', '_', $event)) }}</option>
-                    @endforeach
-                </select>
-            </div>
+        <div>
+            <h2 class="text-lg font-semibold">{{ __('notifications.settings.recent') }}</h2>
+            <p class="text-sm text-gray-500">{{ __('notifications.settings.delivery_states') }}</p>
         </div>
-
-        <div class="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-            <table class="w-full min-w-[52rem] divide-y divide-gray-200 text-start dark:divide-gray-700">
-                <thead class="bg-gray-50 text-xs font-medium uppercase text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                    <tr>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.booking') }}</th>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.customer') }}</th>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.event') }}</th>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.status') }}</th>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.created') }}</th>
-                        <th scope="col" class="px-4 py-3">{{ __('notifications.settings.actions') }}</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
-                    @forelse ($history as $notification)
-                        @php($statusClasses = match ($notification->status) {
-                            'delivered' => 'bg-success-50 text-success-700 dark:bg-success-400/10 dark:text-success-400',
-                            'failed' => 'bg-danger-50 text-danger-700 dark:bg-danger-400/10 dark:text-danger-400',
-                            'accepted' => 'bg-primary-50 text-primary-700 dark:bg-primary-400/10 dark:text-primary-400',
-                            'retry_wait', 'queued', 'processing' => 'bg-warning-50 text-warning-700 dark:bg-warning-400/10 dark:text-warning-400',
-                            default => 'bg-gray-100 text-gray-700 dark:bg-white/10 dark:text-gray-300',
-                        })
-                        <tr class="align-top">
-                            <td class="px-4 py-3 text-sm font-medium">{{ $notification->booking?->reference ?? __('notifications.settings.unavailable') }}</td>
-                            <td class="px-4 py-3 text-sm">{{ $notification->customer?->name ?? __('notifications.settings.unavailable') }}</td>
-                            <td class="px-4 py-3 text-sm">{{ __('notifications.events.'.str_replace('.', '_', $notification->event_type)) }}</td>
-                            <td class="px-4 py-3"><span @class(['inline-flex rounded-full px-2 py-1 text-xs font-medium', $statusClasses])>{{ __('notifications.provider_statuses.'.$notification->status) }}</span></td>
-                            <td class="px-4 py-3 text-sm text-gray-500" title="{{ $notification->created_at->toIso8601String() }}">{{ $notification->created_at->diffForHumans() }}</td>
-                            <td class="space-y-2 px-4 py-3">
-                                @if ($notification->status === 'failed')
-                                    <x-filament::button color="warning" size="sm" icon="heroicon-o-arrow-path" wire:click="resend('{{ $notification->getKey() }}')" wire:target="resend('{{ $notification->getKey() }}')" wire:loading.attr="disabled">
-                                        {{ __('notifications.settings.resend') }}
-                                    </x-filament::button>
-                                @endif
-                                <details class="text-sm">
-                                    <summary class="cursor-pointer text-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-600 dark:text-primary-400">{{ __('notifications.settings.details_attempts', ['count' => $notification->attempts->count()]) }}</summary>
-                                    <div class="mt-2 max-w-sm space-y-2 text-xs text-gray-600 dark:text-gray-300">
-                                        @if ($notification->error_message)
-                                            <p><span class="font-semibold">{{ $notification->error_code }}:</span> {{ $notification->error_message }}</p>
-                                        @endif
-                                        @forelse ($notification->attempts as $attempt)
-                                            <div class="border-s-2 border-gray-200 ps-2 dark:border-gray-700">
-                                                <p>{{ $attempt->created_at->format('Y-m-d H:i:s') }} · {{ $attempt->channel }} · {{ __('notifications.provider_statuses.'.$attempt->status) }}</p>
-                                                @if ($attempt->provider_message_id)<p>{{ __('notifications.settings.provider_id') }}: {{ $attempt->provider_message_id }}</p>@endif
-                                                @if ($attempt->error_code || $attempt->error_message)<p>{{ $attempt->error_code }} {{ $attempt->error_message }}</p>@endif
-                                            </div>
-                                        @empty
-                                            <p>{{ __('notifications.settings.no_attempts') }}</p>
-                                        @endforelse
-                                    </div>
-                                </details>
-                            </td>
-                        </tr>
-                    @empty
-                        <tr><td colspan="6" class="px-4 py-10 text-center text-sm text-gray-500">{{ __('notifications.settings.no_matches') }}</td></tr>
-                    @endforelse
-                </tbody>
-            </table>
+        <div class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            {{ $this->table }}
         </div>
     </section>
 </x-filament-panels::page>

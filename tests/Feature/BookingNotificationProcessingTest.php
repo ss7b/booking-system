@@ -1010,10 +1010,10 @@ class BookingNotificationProcessingTest extends TestCase
             ->assertSee('Booking rescheduled');
 
         $component->set('historyStatus', 'failed');
-        $this->assertSame(1, substr_count($component->html(), '<tr class="align-top">'));
+        $component->assertSee('Booking confirmation');
 
         $component->set('historyStatus', '')->set('historyEvent', 'booking.rescheduled');
-        $this->assertSame(1, substr_count($component->html(), '<tr class="align-top">'));
+        $component->assertSee('Booking rescheduled');
     }
 
     public function test_owner_can_resend_only_a_failed_notification_in_the_current_business(): void

@@ -12,13 +12,19 @@ use App\Models\UserNotification;
 use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Table;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
 
-class NotificationCenter extends Page
+class NotificationCenter extends Page implements HasTable
 {
+    use InteractsWithTable;
+
     protected static ?string $navigationIcon = 'heroicon-o-bell';
 
     protected static ?string $navigationGroup = 'Booking Management';
@@ -158,6 +164,83 @@ class NotificationCenter extends Page
                 ->danger()
                 ->send();
         }
+    }
+
+    public function table(Table $table): Table
+    {
+        $business = $this->business();
+
+        return $table
+            ->query(app(NotificationManager::class)
+                ->query(Filament::auth()->user(), $business)
+                ->with(['booking:id,reference,starts_at,location_id', 'booking.location:id,timezone'])
+                ->latest('created_at'))
+            ->columns([
+                Tables\Columns\TextColumn::make('notification_type')
+                    ->label(__('notifications.settings.event'))
+                    ->badge()
+                    ->formatStateUsing(fn (string $state): string => __('notifications.types.'.str_replace('.', '_', $state)))
+                    ->searchable()
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('data.message')
+                    ->label(__('notifications.ui.inbox'))
+                    ->placeholder(fn (UserNotification $record): string => $record->booking
+                        ? $record->booking->reference
+                        : __('notifications.ui.booking_unavailable'))
+                    ->wrap(),
+                Tables\Columns\IconColumn::make('read_at')
+                    ->label(__('notifications.ui.read'))
+                    ->boolean()
+                    ->trueIcon('heroicon-o-envelope-open')
+                    ->falseIcon('heroicon-o-envelope')
+                    ->sortable(),
+                Tables\Columns\TextColumn::make('read_at')
+                    ->label(__('notifications.settings.status'))
+                    ->badge()
+                    ->formatStateUsing(fn ($state): string => $state ? __('notifications.ui.read') : __('notifications.ui.unread'))
+                    ->color(fn ($state): string => $state ? 'gray' : 'primary'),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label(__('notifications.settings.created'))
+                    ->since()
+                    ->sortable(),
+            ])
+            ->filters([
+                Tables\Filters\TernaryFilter::make('read_at')
+                    ->label(__('notifications.settings.status'))
+                    ->nullable()
+                    ->trueLabel(__('notifications.ui.read'))
+                    ->falseLabel(__('notifications.ui.unread')),
+            ])
+            ->actions([
+                Tables\Actions\Action::make('open')
+                    ->label(__('notifications.ui.open_booking'))
+                    ->icon('heroicon-o-arrow-top-right-on-square')
+                    ->visible(fn (UserNotification $record): bool => $record->booking !== null)
+                    ->url(fn (UserNotification $record): ?string => $record->booking
+                        ? BookingResource::getUrl('index', ['tenant' => $business]).'?tableSearch='.urlencode($record->booking->reference)
+                        : null),
+                Tables\Actions\Action::make('markRead')
+                    ->label(__('notifications.ui.mark_read'))
+                    ->icon('heroicon-o-check')
+                    ->visible(fn (UserNotification $record): bool => $record->read_at === null)
+                    ->action(function (UserNotification $record): void {
+                        app(NotificationManager::class)->markRead(Filament::auth()->user(), $this->business(), (string) $record->getKey());
+                        $this->dispatchUnreadCount();
+                        Notification::make()->title(__('notifications.ui.read'))->success()->send();
+                    }),
+            ])
+            ->headerActions([
+                Tables\Actions\Action::make('markAllRead')
+                    ->label(__('notifications.ui.mark_all_read'))
+                    ->icon('heroicon-o-check')
+                    ->action(function (): void {
+                        app(NotificationManager::class)->markAllRead(Filament::auth()->user(), $this->business());
+                        $this->dispatchUnreadCount();
+                    }),
+            ])
+            ->emptyStateHeading(__('notifications.ui.empty'))
+            ->emptyStateDescription(__('notifications.ui.empty_help'))
+            ->emptyStateIcon('heroicon-o-bell');
     }
 
     protected function getViewData(): array

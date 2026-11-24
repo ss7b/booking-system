@@ -7,6 +7,7 @@ use App\Domain\Authorization\ManageBusinessMemberships;
 use App\Enums\BookingStatus;
 use App\Enums\BranchAccessScope;
 use App\Enums\BusinessRole;
+use App\Filament\Pages\ManageBusinessMemberships as ManageBusinessMembershipsPage;
 use App\Models\Booking;
 use App\Models\Business;
 use App\Models\Customer;
@@ -15,12 +16,14 @@ use App\Models\Service;
 use App\Models\Staff;
 use App\Models\User;
 use Filament\Facades\Filament;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class BusinessMembershipAccessTest extends TestCase
@@ -104,7 +107,7 @@ class BusinessMembershipAccessTest extends TestCase
 
         $calendarQuery = app(BusinessAccess::class)->calendars($user, $business);
 
-        $this->assertInstanceOf(\Illuminate\Database\Eloquent\Builder::class, $calendarQuery);
+        $this->assertInstanceOf(Builder::class, $calendarQuery);
         $this->assertSame($business->getKey(), $calendarQuery->getModel()->business_id ?? $business->getKey());
     }
 
@@ -254,6 +257,66 @@ class BusinessMembershipAccessTest extends TestCase
 
         Sanctum::actingAs($manager);
         $this->withHeaders($headers)->getJson('/api/v1/admin/memberships')->assertForbidden();
+    }
+
+    public function test_membership_filament_page_add_edit_and_cross_business_validation(): void
+    {
+        [$business, $location] = $this->makeBusinessWithLocations();
+        [$otherBusiness] = $this->makeBusinessWithLocations();
+        $owner = User::factory()->create();
+        $existing = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $business->users()->attach($owner, ['role' => 'owner', 'access_scope' => 'all']);
+
+        Livewire::actingAs($owner, 'web');
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Filament::setTenant($business);
+
+        $component = Livewire::test(ManageBusinessMembershipsPage::class)
+            ->assertSee(__('memberships.add_member'))
+            ->assertSee($owner->name);
+
+        $component->callAction('addMember', data: [
+            'create_new_account' => false,
+            'user_id' => (string) $existing->getKey(),
+            'role' => 'manager',
+            'access_scope' => 'selected',
+            'location_ids' => [(string) $location->getKey()],
+        ])->assertHasNoActionErrors();
+
+        $this->assertDatabaseHas('business_user', [
+            'business_id' => $business->getKey(),
+            'user_id' => $existing->getKey(),
+            'role' => 'manager',
+            'access_scope' => 'selected',
+        ]);
+
+        Livewire::test(ManageBusinessMembershipsPage::class)
+            ->callTableAction('edit', $existing, data: [
+                'role' => 'receptionist',
+                'access_scope' => 'all',
+                'location_ids' => [],
+            ])
+            ->assertHasNoTableActionErrors();
+
+        $this->assertDatabaseHas('business_user', [
+            'business_id' => $business->getKey(),
+            'user_id' => $existing->getKey(),
+            'role' => 'receptionist',
+            'access_scope' => 'all',
+        ]);
+
+        $component->callAction('addMember', data: [
+            'create_new_account' => false,
+            'user_id' => (string) $otherUser->getKey(),
+            'role' => 'staff',
+            'access_scope' => 'selected',
+            'location_ids' => [],
+        ])->assertHasNoActionErrors();
+
+        Filament::setTenant($otherBusiness);
+        Livewire::test(ManageBusinessMembershipsPage::class)
+            ->assertForbidden();
     }
 
     public function test_business_policy_does_not_grant_business_settings_to_managers(): void

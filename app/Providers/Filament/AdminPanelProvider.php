@@ -2,7 +2,9 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Pages\Auth\EditProfile;
 use App\Http\Controllers\Filament\ExportReportController;
+use App\Http\Controllers\Filament\VerifyAccountEmailChangeController;
 use App\Http\Middleware\SetFilamentLocale;
 use App\Models\Business;
 use Filament\Http\Middleware\Authenticate;
@@ -38,6 +40,7 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
             ->brandName(fn (): string => __('navigation.brand'))
             ->login()
+            ->profile(EditProfile::class)
             ->plugin(FilamentFullCalendarPlugin::make())
             ->tenant(Business::class, ownershipRelationship: 'users')
             ->colors([
@@ -46,6 +49,11 @@ class AdminPanelProvider extends PanelProvider
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
+            ->authenticatedRoutes(function (): void {
+                Route::get('/account/profile/email/verify/{token}', VerifyAccountEmailChangeController::class)
+                    ->where('token', '[A-Za-z0-9]{64}')
+                    ->name('profile.email.verify');
+            })
             ->authenticatedTenantRoutes(function (): void {
                 Route::post('/reports/export/{section}', ExportReportController::class)
                     ->whereIn('section', ['bookings', 'services', 'staff'])
@@ -66,6 +74,10 @@ class AdminPanelProvider extends PanelProvider
                 PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
                 fn () => view('filament.components.locale-switcher'),
             )
+            ->renderHook(
+                PanelsRenderHook::USER_MENU_PROFILE_BEFORE,
+                fn () => view('filament.components.profile-account-label'),
+            )
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -80,6 +92,7 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+            ])
+            ->persistentMiddleware([AuthenticateSession::class]);
     }
 }

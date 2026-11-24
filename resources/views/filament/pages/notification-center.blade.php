@@ -1,70 +1,7 @@
 <x-filament-panels::page>
     <div wire:poll.10s="refreshInbox" class="space-y-6">
-        <section class="rounded-2xl border border-gray-200 bg-white/80 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">
-            <div class="flex flex-col gap-4 border-b border-gray-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-gray-700">
-                <div>
-                    <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ __('notifications.ui.inbox') }}</h2>
-                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ __('notifications.ui.unread_total', ['unread' => $unreadCount, 'total' => $notifications->total()]) }}</p>
-                </div>
-                <x-filament::button color="gray" icon="heroicon-o-check" wire:click="markAllRead" wire:target="markAllRead" wire:loading.attr="disabled">
-                    {{ __('notifications.ui.mark_all_read') }}
-                </x-filament::button>
-            </div>
-
-            @if ($notifications->isEmpty())
-                <div class="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
-                    <div class="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="h-5 w-5" aria-hidden="true">
-                            <path fill-rule="evenodd" d="M10 2a5 5 0 0 1 5 5v2.879l1.146 2.292A1 1 0 0 1 15.18 13H4.82a1 1 0 0 1-.966-1.829L5 9.879V7a5 5 0 0 1 5-5Zm0 15a2.5 2.5 0 0 1-2.45-2h4.9A2.5 2.5 0 0 1 10 17Z" clip-rule="evenodd"/>
-                        </svg>
-                    </div>
-                    <p class="font-medium text-gray-700 dark:text-gray-200">{{ __('notifications.ui.empty') }}</p>
-                    <p class="max-w-sm text-xs text-gray-500 dark:text-gray-400">{{ __('notifications.ui.empty_help') }}</p>
-                </div>
-            @else
-                <div class="space-y-3 p-3 sm:p-4">
-                    @foreach ($notifications as $notification)
-                        <article class="flex flex-col gap-3 rounded-xl border px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4 {{ $notification->read_at ? 'border-gray-200 bg-gray-50/70 dark:border-gray-700 dark:bg-gray-950/30' : 'border-primary-200 bg-primary-50/40 dark:border-primary-500/30 dark:bg-primary-500/5' }}">
-                            <div class="flex min-w-0 items-start gap-3">
-                                <div class="mt-0.5 flex h-2.5 w-2.5 shrink-0 rounded-full {{ $notification->read_at ? 'bg-gray-300 dark:bg-gray-600' : 'bg-primary-500' }}"></div>
-                                <div class="min-w-0 flex-1">
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <p class="truncate text-sm font-semibold text-gray-900 dark:text-white">{{ __('notifications.types.'.str_replace('.', '_', $notification->notification_type)) }}</p>
-                                        @if (! $notification->read_at)
-                                            <span class="inline-flex items-center rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary-700 dark:bg-primary-500/20 dark:text-primary-300">{{ __('notifications.ui.unread') }}</span>
-                                        @else
-                                            <span class="inline-flex items-center rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ __('notifications.ui.read') }}</span>
-                                        @endif
-                                    </div>
-                                    @if (data_get($notification->data, 'message'))
-                                        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{{ data_get($notification->data, 'message') }}</p>
-                                    @elseif ($notification->booking)
-                                        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                                            <span class="font-medium text-gray-700 dark:text-gray-200">{{ $notification->booking->reference }}</span>
-                                            <span class="mx-1 text-gray-400" aria-hidden="true">·</span>
-                                            <span>{{ $notification->booking->starts_at->timezone($notification->booking->location?->timezone ?: $business->timezone)->translatedFormat('M j, Y H:i') }}</span>
-                                        </p>
-                                    @else
-                                        <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{{ __('notifications.ui.booking_unavailable') }}</p>
-                                    @endif
-                                    <time class="mt-2 block text-xs text-gray-500 dark:text-gray-400" datetime="{{ $notification->created_at->toIso8601String() }}">{{ $notification->created_at->diffForHumans() }}</time>
-                                </div>
-                            </div>
-                            <div class="flex items-center justify-end gap-2 sm:min-w-[13rem]">
-                                @if ($notification->booking_url)
-                                    <a class="text-sm font-medium text-primary-600 transition hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300" href="{{ $notification->booking_url }}">{{ __('notifications.ui.open_booking') }}</a>
-                                @endif
-                                @if (! $notification->read_at)
-                                    <x-filament::icon-button icon="heroicon-o-check" :label="__('notifications.ui.mark_read')" wire:click="markRead('{{ $notification->getKey() }}')" />
-                                @endif
-                            </div>
-                        </article>
-                    @endforeach
-                </div>
-                <div class="border-t border-gray-200 px-3 py-3 dark:border-gray-700 sm:px-4">
-                    {{ $notifications->links() }}
-                </div>
-            @endif
+        <section class="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+            {{ $this->table }}
         </section>
 
         <section class="rounded-2xl border border-gray-200 bg-white/80 shadow-sm dark:border-gray-700 dark:bg-gray-900/40">

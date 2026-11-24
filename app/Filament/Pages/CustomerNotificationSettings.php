@@ -11,12 +11,18 @@ use App\Models\User;
 use Filament\Facades\Filament;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Filament\Tables;
+use Filament\Tables\Concerns\InteractsWithTable;
+use Filament\Tables\Contracts\HasTable;
+use Filament\Tables\Table;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 
-class CustomerNotificationSettings extends Page
+class CustomerNotificationSettings extends Page implements HasTable
 {
+    use InteractsWithTable;
+
     protected static ?string $navigationIcon = 'heroicon-o-paper-airplane';
 
     protected static ?string $navigationGroup = 'Booking Management';
@@ -205,6 +211,73 @@ class CustomerNotificationSettings extends Page
         $notifications->resend($notification, Filament::auth()->user());
 
         Notification::make()->title(__('notifications.resend_queued'))->success()->send();
+    }
+
+    public function table(Table $table): Table
+    {
+        $statuses = ['queued', 'processing', 'retry_wait', 'accepted', 'delivered', 'failed', 'unknown', 'superseded', 'skipped'];
+
+        return $table
+            ->query(CustomerNotification::query()
+                ->where('business_id', $this->business()->getKey())
+                ->with(['customer:id,name,email,phone', 'booking:id,reference', 'attempts'])
+                ->when(in_array($this->historyStatus, $statuses, true), fn ($query) => $query->where('status', $this->historyStatus))
+                ->when(in_array($this->historyEvent, CustomerNotificationService::EVENTS, true), fn ($query) => $query->where('event_type', $this->historyEvent))
+                ->latest('created_at'))
+            ->columns([
+                Tables\Columns\TextColumn::make('booking.reference')
+                    ->label(__('notifications.settings.booking'))
+                    ->placeholder(__('notifications.settings.unavailable'))
+                    ->searchable(),
+                Tables\Columns\TextColumn::make('customer.name')
+                    ->label(__('notifications.settings.customer'))
+                    ->placeholder(__('notifications.settings.unavailable')),
+                Tables\Columns\TextColumn::make('event_type')
+                    ->label(__('notifications.settings.event'))
+                    ->formatStateUsing(fn (string $state): string => __('notifications.events.'.str_replace('.', '_', $state))),
+                Tables\Columns\TextColumn::make('status')
+                    ->label(__('notifications.settings.status'))
+                    ->badge()
+                    ->formatStateUsing(fn (string $state): string => __('notifications.provider_statuses.'.$state))
+                    ->color(fn (string $state): string => match ($state) {
+                        'delivered' => 'success',
+                        'failed' => 'danger',
+                        'accepted' => 'primary',
+                        'retry_wait', 'queued', 'processing' => 'warning',
+                        default => 'gray',
+                    }),
+                Tables\Columns\TextColumn::make('created_at')
+                    ->label(__('notifications.settings.created'))
+                    ->since()
+                    ->sortable(),
+            ])
+            ->filters([
+                Tables\Filters\SelectFilter::make('status')
+                    ->label(__('notifications.settings.filter_status'))
+                    ->options(collect($statuses)->mapWithKeys(fn (string $status): array => [$status => __('notifications.provider_statuses.'.$status)])),
+                Tables\Filters\SelectFilter::make('event_type')
+                    ->label(__('notifications.settings.filter_event'))
+                    ->options(collect(CustomerNotificationService::EVENTS)->mapWithKeys(fn (string $event): array => [
+                        $event => __('notifications.events.'.str_replace('.', '_', $event)),
+                    ])),
+            ])
+            ->actions([
+                Tables\Actions\Action::make('resend')
+                    ->label(__('notifications.settings.resend'))
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('warning')
+                    ->visible(fn (CustomerNotification $record): bool => $record->status === 'failed')
+                    ->action(fn (CustomerNotification $record) => $this->resend((string) $record->getKey(), app(CustomerNotificationService::class))),
+                Tables\Actions\Action::make('details')
+                    ->label(fn (CustomerNotification $record): string => __('notifications.settings.details_attempts', ['count' => $record->attempts->count()]))
+                    ->icon('heroicon-o-clipboard-document-list')
+                    ->modalHeading(__('notifications.settings.details_attempts', ['count' => '']))
+                    ->modalSubmitAction(false)
+                    ->modalCancelActionLabel(__('filament-actions::modal.actions.close.label'))
+                    ->modalContent(fn (CustomerNotification $record) => view('filament.pages.customer-notification-attempts', ['record' => $record])),
+            ])
+            ->emptyStateHeading(__('notifications.settings.no_matches'))
+            ->emptyStateIcon('heroicon-o-bell-slash');
     }
 
     protected function getViewData(): array

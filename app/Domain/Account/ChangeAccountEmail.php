@@ -8,17 +8,14 @@ use App\Models\PendingEmailChange;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Database\UniqueConstraintViolationException;
-use Illuminate\Http\Request;
-use Illuminate\Support\ConfigurationUrlParser;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
-use InvalidArgumentException;
 use SensitiveParameter;
 use Throwable;
 
@@ -26,40 +23,11 @@ final class ChangeAccountEmail
 {
     private const VERIFICATION_ROUTE = 'filament.admin.profile.email.verify';
 
+    public function __construct(private readonly AccountSecurityMail $mail) {}
+
     public function isAvailable(): bool
     {
-        if (! config('account-security.mail_enabled') || config('mail.default') !== 'smtp') {
-            return false;
-        }
-
-        $origin = (string) config('app.url');
-        $parts = parse_url($origin);
-        $scheme = $parts['scheme'] ?? null;
-        if (! filter_var($origin, FILTER_VALIDATE_URL)
-            || isset($parts['user']) || isset($parts['query']) || isset($parts['fragment'])
-            || ($scheme !== 'https' && ($scheme !== 'http' || ! app()->environment('local', 'testing')))) {
-            return false;
-        }
-
-        $smtp = config('mail.mailers.smtp', []);
-        try {
-            // MAIL_URL can override the transport selected by Laravel's mail manager.
-            if (isset($smtp['url'])) {
-                $smtp = (new ConfigurationUrlParser)->parseConfiguration($smtp);
-                $smtp['transport'] = $smtp['driver'] ?? null;
-            }
-        } catch (InvalidArgumentException) {
-            return false;
-        }
-
-        $from = $smtp['from']['address'] ?? config('mail.from.address');
-
-        return ($smtp['transport'] ?? null) === 'smtp'
-            && filled($smtp['host'] ?? null)
-            && in_array($smtp['scheme'] ?? null, [null, 'smtp', 'smtps'], true)
-            && filter_var($from, FILTER_VALIDATE_EMAIL) !== false
-            && strcasecmp($from, 'hello@example.com') !== 0
-            && blank($smtp['to']['address'] ?? config('mail.to.address'));
+        return $this->mail->isAvailable();
     }
 
     public function pendingFor(User $user): ?PendingEmailChange
@@ -85,7 +53,7 @@ final class ChangeAccountEmail
         $token = bin2hex(random_bytes(32));
         $tokenHash = hash('sha256', $token);
         $expiresAt = now()->addMinutes(30);
-        $url = $this->verificationUrl($token, $expiresAt);
+        $url = $this->mail->urls()->temporarySignedRoute(self::VERIFICATION_ROUTE, $expiresAt, ['token' => $token]);
 
         DB::transaction(function () use ($user, $email, $currentPassword, $tokenHash, $expiresAt): void {
             $current = $this->lockAccount($user);
@@ -139,6 +107,7 @@ final class ChangeAccountEmail
                 abort_if(User::query()->where('email', $pending->email)->exists(), 403, __('account_email.invalid_link'));
 
                 $previousEmail = $current->email;
+                Password::broker()->deleteToken($current);
                 $current->forceFill(['email' => $pending->email, 'email_verified_at' => now()])->save();
                 $pending->delete();
 
@@ -178,16 +147,5 @@ final class ChangeAccountEmail
     private function credentialHash(User $user): string
     {
         return hash_hmac('sha256', $user->getAuthPassword()."\0".$user->email, (string) config('app.key'));
-    }
-
-    private function verificationUrl(#[SensitiveParameter] string $token, \DateTimeInterface $expiresAt): string
-    {
-        $origin = (string) config('app.url');
-        $generator = clone URL::getFacadeRoot();
-        $generator->setRequest(Request::create($origin));
-        $generator->useOrigin($origin);
-        $generator->forceScheme(parse_url($origin, PHP_URL_SCHEME));
-
-        return $generator->temporarySignedRoute(self::VERIFICATION_ROUTE, $expiresAt, ['token' => $token]);
     }
 }

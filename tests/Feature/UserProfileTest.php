@@ -6,12 +6,15 @@ use App\Domain\Authorization\ManageBusinessMemberships;
 use App\Enums\BranchAccessScope;
 use App\Enums\BusinessRole;
 use App\Filament\Pages\Auth\EditProfile;
+use App\Filament\Pages\Auth\ResetPassword;
 use App\Models\Business;
 use App\Models\User;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
 use Illuminate\Testing\TestResponse;
 use Livewire\Features\SupportTesting\Testable;
@@ -263,6 +266,40 @@ class UserProfileTest extends TestCase
         $this->useSession($otherSession);
         $this->update($otherSnapshot, 'save', ['data.name' => 'Stale browser name'])->assertUnauthorized();
         $this->get($this->profileUrl())->assertRedirect(route('filament.admin.auth.login'));
+        $this->assertSame($user->name, $user->fresh()->name);
+    }
+
+    public function test_recovery_rejects_both_old_panel_sessions_and_the_old_remember_cookie(): void
+    {
+        config([
+            'account-security.mail_enabled' => true,
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp.host' => 'smtp.example.test',
+            'mail.mailers.smtp.url' => null,
+            'mail.from.address' => 'security@example.test',
+        ]);
+        Mail::fake();
+        $user = $this->member($this->business(), BusinessRole::Owner);
+        $guard = Auth::guard('web');
+        $recaller = implode('|', [$user->id, $user->getRememberToken(), $guard->hashPasswordForCookie($user->getAuthPassword())]);
+        $recallerName = $guard->getRecallerName();
+        $sessions = [$this->sessionFor($user), $this->sessionFor($user)];
+        $this->useSession($sessions[0]);
+        $snapshot = $this->snapshot($this->get($this->profileUrl())->assertOk());
+        $this->useSession(Str::random(40));
+        Filament::setCurrentPanel(Filament::getPanel('admin'));
+        Livewire::test(ResetPassword::class, ['email' => $user->email, 'token' => Password::broker()->createToken($user)])
+            ->set('password', self::NEW_PASSWORD)->set('passwordConfirmation', self::NEW_PASSWORD)
+            ->call('resetPassword')->assertRedirect(route('filament.admin.auth.login'));
+        $this->assertGuest('web');
+
+        $this->useSession($sessions[0]);
+        $this->update($snapshot, 'save', ['data.name' => 'Stale browser name'])->assertUnauthorized();
+        $this->useSession($sessions[1]);
+        $this->get($this->profileUrl())->assertRedirect(route('filament.admin.auth.login'));
+        $this->useSession(Str::random(40));
+        $this->withCookie($recallerName, $recaller)->get($this->profileUrl())
+            ->assertRedirect(route('filament.admin.auth.login'));
         $this->assertSame($user->name, $user->fresh()->name);
     }
 

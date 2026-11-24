@@ -3,6 +3,9 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\Auth\EditProfile;
+use App\Filament\Pages\Auth\Login;
+use App\Filament\Pages\Auth\RequestPasswordReset;
+use App\Filament\Pages\Auth\ResetPassword;
 use App\Http\Controllers\Filament\ExportReportController;
 use App\Http\Controllers\Filament\VerifyAccountEmailChangeController;
 use App\Http\Middleware\SetFilamentLocale;
@@ -39,7 +42,8 @@ class AdminPanelProvider extends PanelProvider
             ->id('admin')
             ->path('admin')
             ->brandName(fn (): string => __('navigation.brand'))
-            ->login()
+            ->login(Login::class)
+            ->passwordReset(RequestPasswordReset::class, ResetPassword::class)
             ->profile(EditProfile::class)
             ->plugin(FilamentFullCalendarPlugin::make())
             ->tenant(Business::class, ownershipRelationship: 'users')
@@ -73,6 +77,14 @@ class AdminPanelProvider extends PanelProvider
             ->renderHook(
                 PanelsRenderHook::AUTH_LOGIN_FORM_AFTER,
                 fn () => view('filament.components.locale-switcher'),
+            )
+            ->renderHook(
+                PanelsRenderHook::AUTH_PASSWORD_RESET_REQUEST_FORM_AFTER,
+                fn () => view('filament.components.locale-switcher'),
+            )
+            ->renderHook(
+                PanelsRenderHook::AUTH_PASSWORD_RESET_RESET_FORM_AFTER,
+                fn () => view('filament.components.password-reset-links'),
             )
             ->renderHook(
                 PanelsRenderHook::USER_MENU_PROFILE_BEFORE,

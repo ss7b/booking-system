@@ -2,9 +2,9 @@
 
 namespace App\Filament\Pages\Auth;
 
+use App\Domain\Account\AccountCredentials;
 use App\Domain\Account\ChangeAccountEmail;
 use App\Models\User;
-use Closure;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
@@ -14,9 +14,9 @@ use Filament\Support\Enums\MaxWidth;
 use Illuminate\Auth\SessionGuard;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -93,17 +93,8 @@ final class EditProfile extends BaseEditProfile
                         ->label(__('profile.fields.new_password'))
                         ->password()
                         ->required()
-                        ->rule('string')
-                        ->rule(Password::min(12)->letters()->numbers())
-                        ->validationMessages([
-                            'password.letters' => __('profile.errors.password_letters'),
-                            'password.numbers' => __('profile.errors.password_numbers'),
-                        ])
-                        ->rule(fn (): Closure => function (string $attribute, mixed $value, Closure $fail): void {
-                            if (is_string($value) && (strlen($value) > 72 || str_contains($value, "\0"))) {
-                                $fail(__('profile.errors.password_format'));
-                            }
-                        })
+                        ->rules(AccountCredentials::passwordRules(...))
+                        ->validationMessages(AccountCredentials::passwordMessages())
                         ->autocomplete('new-password'),
                     TextInput::make('password_confirmation')
                         ->label(__('profile.fields.confirm_password'))
@@ -182,9 +173,8 @@ final class EditProfile extends BaseEditProfile
                     ]);
                 }
 
-                $account->password = Hash::make($data['password']);
-                $account->setRememberToken(Str::random(60));
-                $account->save();
+                AccountCredentials::replacePassword($account, $data['password']);
+                Password::broker()->deleteToken($account);
 
                 return $account;
             });
